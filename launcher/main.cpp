@@ -11,10 +11,14 @@
 #endif
 
 #ifdef BREAK_INFINITE_LOOP
+
 #include <chrono>
 #include <thread>
 
 #endif
+
+#include <QString>
+#include <QQuickStyle>
 
 int main(int argc, char *argv[]) {
 #ifdef BREAK_INFINITE_LOOP
@@ -35,8 +39,10 @@ int main(int argc, char *argv[]) {
 #endif
 
   // initialize Qt
+  // Set QML style to Basic to avoid customization warnings and rendering issues with native styles
+  QQuickStyle::setStyle("Basic");
+  
   Application app(argc, argv);
-
   switch (app.status()) {
   case Application::StartingUp:
   case Application::Initialized: {
@@ -48,9 +54,10 @@ int main(int argc, char *argv[]) {
     Q_INIT_RESOURCE(colored);
     Q_INIT_RESOURCE(white);
     Q_INIT_RESOURCE(builtin);
-
     Q_INIT_RESOURCE(skins);
-    return app.exec();
+
+    int ret = app.exec();
+    return ret;
   }
   case Application::Failed:
     return 1;

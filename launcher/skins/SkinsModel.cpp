@@ -35,25 +35,6 @@ SkinsModel::SkinsModel(QString path, QObject *parent)
   connect(&m_removalTimer, &QTimer::timeout, this,
           &SkinsModel::removalTimerTriggered);
 
-  addDefaultSkin("Steve", ":/skins/textures/Steve_Slim.png",
-                 ":/skins/textures/Steve_Classic.png");
-  addDefaultSkin("Alex", ":/skins/textures/Alex_Slim.png",
-                 ":/skins/textures/Alex_Classic.png");
-  addDefaultSkin("Ari", ":/skins/textures/Ari_Slim.png",
-                 ":/skins/textures/Ari_Classic.png");
-  addDefaultSkin("Efe", ":/skins/textures/Efe_Slim.png",
-                 ":/skins/textures/Efe_Classic.png");
-  addDefaultSkin("Kai", ":/skins/textures/Kai_Slim.png",
-                 ":/skins/textures/Kai_Classic.png");
-  addDefaultSkin("Makena", ":/skins/textures/Makena_Slim.png",
-                 ":/skins/textures/Makena_Classic.png");
-  addDefaultSkin("Noor", ":/skins/textures/Noor_Slim.png",
-                 ":/skins/textures/Noor_Classic.png");
-  addDefaultSkin("Sunny", ":/skins/textures/Sunny_Slim.png",
-                 ":/skins/textures/Sunny_Classic.png");
-  addDefaultSkin("Zuri", ":/skins/textures/Zuri_Slim.png",
-                 ":/skins/textures/Zuri_Classic.png");
-
   directoryChanged(path);
 }
 

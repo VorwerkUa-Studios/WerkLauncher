@@ -8,6 +8,7 @@
 
 #include "minecraft/auth/AuthRequest.h"
 #include "minecraft/auth/Parsers.h"
+#include "minecraft/auth/SyncUrl.h"
 
 YggdrasilProfileStep::YggdrasilProfileStep(AccountData *data)
     : AuthStep(data) {}
@@ -44,6 +45,12 @@ void YggdrasilProfileStep::perform() {
 
   QUrl url(urlStr + "/sessionserver/session/minecraft/profile/" +
            m_data->minecraftProfile.id);
+  if (!isSafeSyncUrl(url)) {
+    qWarning() << "Refusing to send skin synchronization credentials over "
+                  "plain HTTP to a remote host.";
+    emit finished(AccountTaskState::STATE_WORKING, "");
+    return;
+  }
 
   QNetworkRequest request = QNetworkRequest(url);
   // Yggdrasil profile endpoint shouldn't strictly require auth, but we can pass

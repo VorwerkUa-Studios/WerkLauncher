@@ -115,7 +115,7 @@ else()
     list(APPEND CMAKE_PREFIX_PATH "C:/Qt/6.10.2/msvc2022_64")
 endif()
 list(APPEND CMAKE_PREFIX_PATH "$ENV{USERPROFILE}/vcpkg/installed/x64-windows")
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets Concurrent Network NetworkAuth Test Xml Svg OpenGL)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Concurrent Network NetworkAuth Test Xml Svg OpenGL Quick Qml QuickControls2 QuickWidgets)
 
 if(WIN32)
     if(DEFINED ENV{VCPKG_INSTALLATION_ROOT})
@@ -212,7 +212,7 @@ set(Launcher_Branding_WindowsRC "${PROJECT_SOURCE_DIR}/branding/werklauncher.rc"
 set(Launcher_Branding_LogoQRC "${PROJECT_SOURCE_DIR}/branding/logo.qrc")
 
 set(Launcher_META_URL "https://meta.multimc.org/v1/") # TODO: migrate to own meta server
-set(Launcher_CURSEFORGE_API_KEY "$2a$10$fDvjEOK3YoF8yMPmPnaMrewnOo3X4GYDBGoyQgYeAOM1wQQrkYsmm")
+set(Launcher_CURSEFORGE_API_KEY "" CACHE STRING "CurseForge API key")
 set(Launcher_PASTE_EE_API_KEY "")
 set(Launcher_MSA_CLIENT_ID "c36a9fb6-4f2a-41ff-90bd-ae7cc92031eb")
 set(Launcher_IMGUR_CLIENT_ID "")

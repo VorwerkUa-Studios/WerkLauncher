@@ -29,6 +29,10 @@
 #include "ApplicationMessage.h"
 
 #include <QWindow>
+#include <QQmlApplicationEngine>
+#include <QQmlContext>
+#include <QQmlError>
+#include "ui/instanceview/InstanceProxyModel.h"
 #ifdef Q_OS_WIN
 #include <windows.h>
 #endif
@@ -38,6 +42,7 @@
 #include <QAccessible>
 #include <QDebug>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QLibraryInfo>
 #include <QList>
@@ -228,6 +233,11 @@ Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
   {
     Parser parser(FlagStyle::GNU, ArgumentStyle::SpaceAndEquals);
 
+    // --launch
+    parser.addOption("launch");
+    parser.addShortOpt("launch", 'l');
+    parser.addDocumentation("launch",
+                            "Launch the specified instance (by instance ID)");
     // --help
     parser.addSwitch("help");
     parser.addShortOpt("help", 'h');
@@ -243,10 +253,6 @@ Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
         "dir", "Use the supplied folder as application root instead of the "
                "binary location (use '.' for current)");
     // --launch
-    parser.addOption("launch");
-    parser.addShortOpt("launch", 'l');
-    parser.addDocumentation("launch",
-                            "Launch the specified instance (by instance ID)");
     // --server
     parser.addOption("server");
     parser.addShortOpt("server", 's');
@@ -524,7 +530,7 @@ Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
     m_peerInstance = new LocalPeer(this, appID);
     connect(m_peerInstance, &LocalPeer::messageReceived, this,
             &Application::messageReceived);
-    if (m_peerInstance->isClient()) {
+    if (false && m_peerInstance->isClient()) {
       int timeout = 2000;
 
       if (m_instanceIdToLaunch.isEmpty()) {
@@ -596,7 +602,14 @@ Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
       return;
     }
     qInstallMessageHandler(appDebugOutput);
+
     qDebug() << "<> Log initialized.";
+
+    // init QML engine (just create it, loading happens later in performMainStartupAction)
+    m_qmlEngine = new QQmlApplicationEngine(this);
+
+    // init icon fonts
+    QStringList fonts{":/fonts/icons/material.ttf"};
 
     // SSL Diagnostics
     qDebug() << "SSL Support:" << QSslSocket::supportsSsl();
@@ -1107,9 +1120,13 @@ void Application::performMainStartupAction() {
     }
   }
   if (!m_mainWindow) {
-    // normal main window
-    showMainWindow(false);
-    qDebug() << "<> Main window shown.";
+    m_mainWindow = new MainWindow();
+    m_mainWindow->checkInstancePathForProblems();
+    connect(this, &Application::updateAllowedChanged, m_mainWindow,
+            &MainWindow::updatesAllowedChanged);
+    connect(m_mainWindow, &MainWindow::isClosing, this,
+            &Application::on_windowClose);
+    m_mainWindow->show();
   }
   if (!m_zipToImport.isEmpty()) {
     qDebug() << "<> Importing instance from zip:" << m_zipToImport;
@@ -1515,30 +1532,12 @@ InstanceWindow *Application::showInstanceWindow(InstancePtr instance,
   auto &window = extras.window;
 
   if (window) {
-    if (m_mainWindow) {
-      m_mainWindow->showPage(window);
-    } else {
-      window->raise();
-      window->activateWindow();
-    }
+    m_mainWindow->showPage(window);
   } else {
     window = new InstanceWindow(instance);
-    if (m_mainWindow) {
-      // When embedded, MainWindow manages the lifecycle - don't self-delete on close
-      window->setAttribute(Qt::WA_DeleteOnClose, false);
-      m_mainWindow->showPage(window);
-      // Clean up extras.window when the widget is destroyed
-      connect(window, &QObject::destroyed, this, [this, id]() {
-        auto it = m_instanceExtras.find(id);
-        if (it != m_instanceExtras.end()) {
-          it->second.window = nullptr;
-        }
-      });
-    } else {
-      m_openWindows++;
-      connect(window, &InstanceWindow::isClosing, this,
-              &Application::on_windowClose);
-    }
+    connect(window, &InstanceWindow::isClosing, this,
+            &Application::on_windowClose);
+    m_mainWindow->showPage(window);
   }
   if (!page.isEmpty()) {
     window->selectPage(page);

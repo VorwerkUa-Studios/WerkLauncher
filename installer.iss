@@ -73,17 +73,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#BuildDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "branding\WerkLauncher.ico"; DestDir: "{app}\branding"; Flags: ignoreversion
 
-; ---- Qt6 DLLs (Release) ----
-Source: "{#BuildDir}\Qt6Core.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#BuildDir}\Qt6Core5Compat.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#BuildDir}\Qt6Gui.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#BuildDir}\Qt6Network.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#BuildDir}\Qt6NetworkAuth.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#BuildDir}\Qt6OpenGL.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#BuildDir}\Qt6Widgets.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#BuildDir}\Qt6Xml.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#BuildDir}\Qt6Concurrent.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#BuildDir}\Qt6Svg.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+; ---- Qt6 runtime DLLs ----
+Source: "{#BuildDir}\Qt6*.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 ; ---- Інші DLLs ----
 Source: "{#BuildDir}\Launcher_iconfix.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
@@ -104,6 +95,7 @@ Source: "{#BuildDir}\styles\*.dll"; DestDir: "{app}\styles"; Flags: ignoreversio
 Source: "{#BuildDir}\tls\*.dll"; DestDir: "{app}\tls"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#BuildDir}\networkinformation\*.dll"; DestDir: "{app}\networkinformation"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#BuildDir}\generic\*.dll"; DestDir: "{app}\generic"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#BuildDir}\qml\*"; DestDir: "{app}\qml"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 ; ---- JAR файли ----
 Source: "{#BuildDir}\jars\*.jar"; DestDir: "{app}\jars"; Flags: ignoreversion skipifsourcedoesntexist

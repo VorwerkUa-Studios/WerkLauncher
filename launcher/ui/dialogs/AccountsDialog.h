@@ -111,6 +111,12 @@ private slots:
   void onSelectLittleSkinClicked(bool);
   void onLittleSkinLoginClicked(bool);
   void onLittleSkinCancelClicked(bool);
+  void onSkinContextMenu(const QPoint &pos);
+  
+  void fetchSkinHistory();
+  void onSkinHistoryFetched(QNetworkReply::NetworkError error, QByteArray data, QList<QNetworkReply::RawHeaderPair> headers);
+  void deleteSkinHistory(const QString &filename);
+  void onSkinHistoryDeleted(QNetworkReply::NetworkError error, QByteArray data, QList<QNetworkReply::RawHeaderPair> headers);
 
   void onGetFreshCodeButtonClicked(bool);
   void onQrButtonClicked(bool);

@@ -58,11 +58,14 @@ public:
   bool setData(const QModelIndex &index, const QVariant &value,
                int role) override;
 
+  QHash<int, QByteArray> roleNames() const override;
+
   enum AdditionalRoles {
     GroupRole = Qt::UserRole,
     InstancePointerRole = 0x34B1CB48,   ///< Return pointer to real instance
     InstanceIDRole = 0x34B1CB49,        ///< Return id if the instance
-    VersionDescriptionRole = 0x34B1CB4A ///< Return version description string
+    VersionDescriptionRole = 0x34B1CB4A, ///< Return version description string
+    InstanceIconKeyRole = 0x34B1CB4B    ///< Return raw icon key string for QML
   };
   /*!
    * \brief Error codes returned by functions in the InstanceList class.

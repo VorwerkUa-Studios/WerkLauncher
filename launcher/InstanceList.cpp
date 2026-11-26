@@ -144,6 +144,9 @@ QVariant InstanceList::data(const QModelIndex &index, int role) const {
   case Qt::DecorationRole: {
     return pdata->iconKey();
   }
+  case InstanceIconKeyRole: {
+    return pdata->iconKey();
+  }
   // HACK: see InstanceView.h in gui!
   case GroupRole: {
     return getInstanceGroup(pdata->id());
@@ -172,6 +175,15 @@ bool InstanceList::setData(const QModelIndex &index, const QVariant &value,
   }
   pdata->setName(newName);
   return true;
+}
+
+QHash<int, QByteArray> InstanceList::roleNames() const {
+  QHash<int, QByteArray> roles = QAbstractListModel::roleNames();
+  roles[InstanceIDRole] = "instanceId";
+  roles[GroupRole] = "group";
+  roles[InstanceIconKeyRole] = "iconKey";
+  // Qt::DisplayRole ("display") and Qt::DecorationRole ("decoration") are default
+  return roles;
 }
 
 Qt::ItemFlags InstanceList::flags(const QModelIndex &index) const {
@@ -416,9 +428,11 @@ InstanceList::InstListError InstanceList::loadList() {
       }
       m_instances.erase(m_instances.begin() + front_bookmark,
                         m_instances.begin() + back_bookmark + 1);
-      // Rebuild index after removal to stay consistent
-      for (int i = front_bookmark; i < m_instances.size(); ++i) {
+      m_idIndex.clear();
+      m_instanceIndex.clear();
+      for (int i = 0; i < m_instances.size(); ++i) {
         m_instanceIndex[m_instances.at(i).get()] = i;
+        m_idIndex[m_instances.at(i)->id()] = i;
       }
       endRemoveRows();
       front_bookmark = -1;

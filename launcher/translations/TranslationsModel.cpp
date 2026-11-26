@@ -486,7 +486,7 @@ void TranslationsModel::downloadIndex() {
           &TranslationsModel::indexFailed);
   connect(d->m_index_job.get(), &NetJob::succeeded, this,
           &TranslationsModel::indexReceived);
-  d->m_index_job->start();
+  // d->m_index_job->start();
 }
 
 void TranslationsModel::updateLanguage(QString key) {
@@ -535,7 +535,7 @@ void TranslationsModel::downloadTranslation(QString key) {
   connect(d->m_dl_job.get(), &NetJob::failed, this,
           &TranslationsModel::dlFailed);
 
-  d->m_dl_job->start();
+  // d->m_dl_job->start();
 }
 
 void TranslationsModel::downloadNext() {

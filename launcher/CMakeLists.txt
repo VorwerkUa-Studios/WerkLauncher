@@ -178,6 +178,21 @@ add_unit_test(DownloadTask
     DATA updater/testdata
     )
 
+add_unit_test(InstanceList
+    SOURCES InstanceList_test.cpp
+    LIBS Launcher_logic
+    )
+
+add_unit_test(UpdateRollback
+    SOURCES updater/UpdateRollback_test.cpp
+    LIBS Launcher_logic
+    )
+
+add_unit_test(SyncUrl
+    SOURCES minecraft/auth/SyncUrl_test.cpp
+    LIBS Launcher_logic
+    )
+
 # Rarely used notifications
 set(NOTIFICATIONS_SOURCES
     # Notifications - short warning messages
@@ -836,12 +851,10 @@ qt6_wrap_ui(LAUNCHER_UI
     ui/dialogs/ProfileSelectDialog.ui
     ui/dialogs/ProgressDialog.ui
     ui/dialogs/UpdateDialog.ui
-    ui/pages/global/ExternalToolsPage.ui
+
     ui/pages/global/JavaPage.ui
     ui/pages/global/LauncherPage.ui
     ui/pages/global/MinecraftPage.ui
-    ui/pages/global/PasteEEPage.ui
-    ui/pages/global/ProxyPage.ui
     ui/pages/instance/GameOptionsPage.ui
     ui/pages/instance/InstanceSettingsPage.ui
     ui/pages/instance/LegacyUpgradePage.ui
@@ -873,6 +886,7 @@ qt6_add_resources(LAUNCHER_RESOURCES
     resources/builtin/builtin.qrc
     resources/documents/documents.qrc
     resources/skins/skins.qrc
+    resources/qml.qrc
     ${Launcher_Branding_LogoQRC}
 )
 
@@ -903,6 +917,10 @@ target_link_libraries(Launcher_logic
     Qt6::Concurrent
     Qt6::Gui
     Qt6::OpenGL
+    Qt6::Quick
+    Qt6::QuickControls2
+    Qt6::Qml
+    Qt6::QuickWidgets
 )
 target_link_libraries(Launcher_logic
     Launcher_iconfix
@@ -950,12 +968,14 @@ if(WIN32)
     add_dependencies(${Launcher_Name} JavaCheck NewLaunch)
     add_custom_command(TARGET ${Launcher_Name} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E echo "Deploying assets..."
-        COMMAND "${QT_BIN_DIR}/windeployqt.exe" --no-compiler-runtime --no-opengl-sw --no-translations --dir $<TARGET_FILE_DIR:${Launcher_Name}> $<TARGET_FILE:${Launcher_Name}>
+        COMMAND "${QT_BIN_DIR}/windeployqt.exe" --qmldir "${CMAKE_CURRENT_SOURCE_DIR}/ui/qml" --no-compiler-runtime --no-opengl-sw --no-translations --dir $<TARGET_FILE_DIR:${Launcher_Name}> $<TARGET_FILE:${Launcher_Name}>
         COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${Launcher_Name}>/translations
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/translations/en_GB.po $<TARGET_FILE_DIR:${Launcher_Name}>/translations/
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/translations/uk.po $<TARGET_FILE_DIR:${Launcher_Name}>/translations/
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/translations/index_v2.json $<TARGET_FILE_DIR:${Launcher_Name}>/translations/
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${QT_BIN_DIR}/../translations/qtbase_uk.qm" $<TARGET_FILE_DIR:${Launcher_Name}>/translations/qt_uk.qm
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${Launcher_Name}>/jars
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/jars $<TARGET_FILE_DIR:${Launcher_Name}>/jars
         COMMENT "Deploying plugins, translations and JavaCheck for ${Launcher_Name}"
     )
 endif()
