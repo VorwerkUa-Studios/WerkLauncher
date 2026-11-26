@@ -7,6 +7,7 @@
 #include <chrono>
 #include <thread>
 #include <updater/GoUpdate.h>
+#include <updater/UpdateRollback.h>
 
 #include "BuildConfig.h"
 
@@ -330,14 +331,8 @@ bool UpdateController::rollback() {
   // if the above failed, roll back changes
   for (auto backup : m_replace_backups) {
     qWarning() << "restoring" << backup.original << "from" << backup.backup;
-    if (!QFile::rename(backup.original, backup.update)) {
-      revertOK = false;
-      qWarning() << "moving new" << backup.original << "back to"
-                 << backup.update << "failed!";
-      continue;
-    }
-
-    if (!QFile::rename(backup.backup, backup.original)) {
+    if (!restoreReplacementBackup(backup.original, backup.backup,
+                                 backup.update)) {
       revertOK = false;
       qWarning() << "restoring" << backup.original << "failed!";
     }

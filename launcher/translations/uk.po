@@ -4314,6 +4314,46 @@ msgctxt "QObject|"
 msgid "processArguments is set to unknown value '%1'"
 msgstr "в processArguments задано невідоме значення '%1"
 
+msgctxt "MainWindow|"
+msgid "Invalid nickname or password. Please check your credentials and try again."
+msgstr "Неправильний нікнейм або пароль. Будь ласка, перевірте дані та спробуйте ще раз."
+
+msgctxt "AccountsDialog|"
+msgid "Add Pirate Account"
+msgstr "Додати піратський акаунт"
+
+msgctxt "AccountsDialog|"
+msgid "Enter your nickname to play Minecraft."
+msgstr "Введіть свій нікнейм, щоб грати в Minecraft."
+
+msgctxt "AccountsDialog|"
+msgid "Email / Username"
+msgstr "Нікнейм"
+
+msgctxt "AccountsDialog|"
+msgid "Required Password (for security)"
+msgstr "Обов'язковий пароль (для безпеки)"
+
+msgctxt "AccountsDialog|"
+msgid "The first password you use will lock this nickname to your account on the server."
+msgstr "Перший пароль, який ви використаєте, закріпить цей нікнейм за вашим акаунтом на сервері."
+
+msgctxt "AccountsDialog|"
+msgid "Log In"
+msgstr "Увійти"
+
+msgctxt "AccountsDialog|"
+msgid "Cancel"
+msgstr "Скасувати"
+
+msgctxt "AccountsDialog|"
+msgid "Get Fresh Code"
+msgstr "Отримати новий код"
+
+msgctxt "AccountsDialog|"
+msgid "Copy Link"
+msgstr "Копіювати посилання"
+
 msgctxt "InstanceSettingsPage|"
 msgid "Conso&le Settings"
 msgstr "Налаштування консолі"
@@ -5134,3 +5174,42 @@ msgstr "Назва групи:"
 msgctxt "MainWindow"
 msgid "Sort by Version"
 msgstr "За версією"
+msgctxt "MainWindow"
+msgid "Create group"
+msgstr "Створити групу"
+
+msgctxt "MainWindow"
+msgid "Group name:"
+msgstr "Назва групи:"
+
+msgctxt "MainWindow"
+msgid "About to delete: %1\nThis is permanent and will completely delete the instance.\n\nAre you sure?"
+msgstr "Ви збираєтесь видалити: %1\nЦе незворотно і повністю видалить збірку.\n\nВи впевнені?"
+
+msgctxt "MainWindow"
+msgid "No instances found"
+msgstr "Не знайдено жодної збірки"
+
+msgctxt "AccountsDialog"
+msgid "Select Account Type"
+msgstr "Оберіть тип акаунта"
+
+msgctxt "AccountsDialog"
+msgid "Microsoft Account"
+msgstr "Акаунт Microsoft"
+
+msgctxt "AccountsDialog"
+msgid "Log in with your Microsoft account."
+msgstr "Увійти за допомогою акаунта Microsoft."
+
+msgctxt "AccountsDialog"
+msgid "Pirate Account"
+msgstr "Піратський акаунт"
+
+msgctxt "AccountsDialog"
+msgid "Play Minecraft using a pirate account."
+msgstr "Грати в Minecraft з піратським акаунтом."
+
+msgctxt "MainWindow"
+msgid "Invalid nickname or password. Please check your credentials and try again."
+msgstr "Неправильний нікнейм або пароль. Будь ласка, перевірте дані та спробуйте ще раз."

@@ -1,5 +1,8 @@
 <!DOCTYPE RCC>
 <RCC version="1.0">
+    <qresource prefix="/qml">
+        <file alias="Main.qml">../../ui/qml/Main.qml</file>
+    </qresource>
     <qresource prefix="/icons/builtin">
         <!-- logos -->
         <file>scalable/atlauncher.svg</file>

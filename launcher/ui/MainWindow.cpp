@@ -58,7 +58,40 @@
 
 #include <QtWidgets/QToolButton>
 
+#include <QQuickWidget>
+#include <QQmlContext>
+#include <QQmlEngine>
+#include <QQuickImageProvider>
 #include <QtWidgets/QVBoxLayout>
+
+#include "Application.h"
+#include "icons/IconList.h"
+
+class ThemedIconProvider : public QQuickImageProvider {
+public:
+    ThemedIconProvider() : QQuickImageProvider(QQuickImageProvider::Pixmap) {}
+
+    QPixmap requestPixmap(const QString &id, QSize *size, const QSize &requestedSize) override {
+        QString cleanId = id;
+        int queryIndex = cleanId.indexOf('?');
+        if (queryIndex != -1) {
+            cleanId = cleanId.left(queryIndex);
+        }
+
+        QIcon icon = APPLICATION->getThemedIcon(cleanId);
+        if (icon.isNull()) {
+            icon = APPLICATION->icons()->getIcon(cleanId);
+        }
+        if (icon.isNull()) {
+            return QPixmap();
+        }
+        QSize actualSize = requestedSize.isValid() ? requestedSize : QSize(32, 32);
+        if (size) {
+            *size = actualSize;
+        }
+        return icon.pixmap(actualSize);
+    }
+};
 
 #include <QtWidgets/QWidget>
 
@@ -1039,7 +1072,24 @@ MainWindow::MainWindow(QWidget *parent)
 
             &InstanceList::on_GroupStateChanged);
 
-    verticalLayout->addWidget(view);
+    // HIDE THE OLD C++ UI ELEMENTS
+    m_searchBar->hide();
+    m_sortBox->hide();
+    view->hide();
+    ui->mainToolBar->hide();
+    ui->statusBar->hide();
+
+    // ADD THE QML UI INSTEAD
+    auto *qmlWidget = new QQuickWidget(m_instanceViewPage);
+    qmlWidget->engine()->addImageProvider(QLatin1String("themedicon"), new ThemedIconProvider());
+    qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+    qmlWidget->rootContext()->setContextProperty("launcherController", this);
+    qmlWidget->rootContext()->setContextProperty("instanceModel", static_cast<QObject*>(proxymodel));
+    qmlWidget->setSource(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
+    
+    // Pass focus and add to layout
+    qmlWidget->setFocusPolicy(Qt::StrongFocus);
+    verticalLayout->addWidget(qmlWidget);
 
     m_pageStack->addWidget(m_instanceViewPage);
   }
@@ -1286,6 +1336,10 @@ void MainWindow::retranslateUi() {
   } else {
   }
 
+  if (auto qmlWidget = this->findChild<QQuickWidget *>()) {
+    qmlWidget->engine()->retranslate();
+  }
+
   ui->retranslateUi(this);
 }
 
@@ -1330,6 +1384,8 @@ void MainWindow::showInstanceView() {
 
   m_pageStack->setCurrentWidget(m_instanceViewPage);
   ui->actionBack->setVisible(false);
+  ui->mainToolBar->hide();
+  ui->statusBar->hide();
 
   QString winTitle = tr("%1 - Version %2", "Launcher - Version X")
                        .arg(BuildConfig.LAUNCHER_DISPLAYNAME,
@@ -1347,12 +1403,106 @@ void MainWindow::showPage(QWidget *page) {
   }
   m_pageStack->setCurrentWidget(page);
   ui->actionBack->setVisible(true);
+  ui->mainToolBar->show();
+  ui->statusBar->show();
 
   if (page->windowTitle().isEmpty()) {
      m_titleBar->setTitle(BuildConfig.LAUNCHER_DISPLAYNAME);
   } else {
      m_titleBar->setTitle(QString("%1 / %2").arg(BuildConfig.LAUNCHER_DISPLAYNAME, page->windowTitle()));
   }
+}
+
+QString MainWindow::getWallpaper() const {
+  return APPLICATION->settings()->get("BackgroundWallpaper").toString();
+}
+
+QVariantList MainWindow::getInstanceGroups() const {
+  QVariantList result;
+  if (!proxymodel || !APPLICATION->instances()) {
+    return result;
+  }
+
+  auto instances = APPLICATION->instances();
+  QStringList groups = instances->getGroups();
+  groups.removeAll(QString());
+  groups.removeDuplicates();
+  groups.sort(Qt::CaseInsensitive);
+  groups.prepend(QString());
+
+  QMap<QString, QVariantList> instancesByGroup;
+  for (const auto &group : groups) {
+    instancesByGroup.insert(group, {});
+  }
+
+  for (int row = 0; row < proxymodel->rowCount(); ++row) {
+    const auto index = proxymodel->index(row, 0);
+    const QString group = index.data(InstanceList::GroupRole).toString();
+    if (!instancesByGroup.contains(group)) {
+      instancesByGroup.insert(group, {});
+      groups.append(group);
+    }
+
+    QVariantMap instance;
+    instance.insert("instanceId",
+                    index.data(InstanceList::InstanceIDRole).toString());
+    instance.insert("display", index.data(Qt::DisplayRole).toString());
+    instance.insert("iconKey",
+                    index.data(InstanceList::InstanceIconKeyRole).toString());
+    instance.insert("modelIndex", row);
+    instancesByGroup[group].append(instance);
+  }
+
+  for (const auto &group : groups) {
+    const auto groupInstances = instancesByGroup.value(group);
+    if (group.isEmpty() && groupInstances.isEmpty()) {
+      continue;
+    }
+
+    QVariantMap section;
+    section.insert("name", group);
+    section.insert("label", group.isEmpty() ? tr("Ungrouped") : group);
+    section.insert("instances", groupInstances);
+    section.insert("collapsed",
+                   !group.isEmpty() && instances->isGroupCollapsed(group));
+    result.append(section);
+  }
+
+  return result;
+}
+
+void MainWindow::setGroupCollapsed(const QString &group, bool collapsed) {
+  if (!group.isEmpty() && APPLICATION->instances()) {
+    APPLICATION->instances()->on_GroupStateChanged(group, collapsed);
+  }
+}
+
+int MainWindow::getSortModeIndex() const {
+  const QString sortMode =
+      APPLICATION->settings()->get("InstSortMode").toString();
+  if (sortMode == "LastLaunch") {
+    return 1;
+  }
+  if (sortMode == "Version") {
+    return 2;
+  }
+  return 0;
+}
+
+QString MainWindow::getAccentColor() const {
+  QString accentStr = APPLICATION->settings()->get("CustomAccentColor").toString();
+  if (accentStr.isEmpty()) {
+      return "#ffae00";
+  }
+  return accentStr;
+}
+
+QString MainWindow::getThemedIconUrl(const QString &name) const {
+    return "image://themedicon/" + name;
+}
+
+QString MainWindow::getThemeName() const {
+    return APPLICATION->settings()->get("ApplicationTheme").toString();
 }
 
 void MainWindow::showInstanceContextMenu(const QPoint &pos) {
@@ -1461,7 +1611,94 @@ void MainWindow::showInstanceContextMenu(const QPoint &pos) {
 
   */
 
-  myMenu.exec(view->mapToGlobal(pos));
+  myMenu.exec(QCursor::pos());
+}
+
+void MainWindow::showHelpMenu() {
+  QMenu helpMenu;
+  helpMenu.addAction(ui->actionStatistics);
+  helpMenu.addAction(ui->actionDonatello);
+  helpMenu.addAction(ui->actionDISCORD);
+  helpMenu.addAction(ui->actionTELEGRAM);
+  helpMenu.addSeparator();
+  helpMenu.addAction(ui->actionAbout);
+  helpMenu.exec(QCursor::pos());
+}
+
+void MainWindow::showInstanceContextMenuFromQml() {
+  if (!m_selectedInstance) return;
+
+  QMenu myMenu;
+
+  QAction *actionVoid = new QAction(m_selectedInstance->name(), &myMenu);
+  actionVoid->setEnabled(false);
+  myMenu.addAction(actionVoid);
+  myMenu.addSeparator();
+  myMenu.addAction(ui->actionChangeInstIcon.operator->());
+  myMenu.addSeparator();
+  myMenu.addAction(ui->actionChangeInstGroup.operator->());
+  myMenu.addSeparator();
+  myMenu.addAction(ui->actionEditInstance.operator->());
+  myMenu.addSeparator();
+  myMenu.addAction(ui->actionViewSelectedMCFolder.operator->());
+  myMenu.addAction(ui->actionConfig_Folder.operator->());
+  myMenu.addSeparator();
+  myMenu.addAction(ui->actionCreateShortcut.operator->());
+  myMenu.addAction(ui->actionExportInstance.operator->());
+  myMenu.addAction(ui->actionDeleteInstance.operator->());
+  myMenu.addAction(ui->actionCopyInstance.operator->());
+
+  myMenu.exec(QCursor::pos());
+}
+
+void MainWindow::showEmptySpaceContextMenu() {
+  QMenu myMenu;
+
+  QAction *actionVoid = new QAction(BuildConfig.LAUNCHER_NAME, this);
+  actionVoid->setEnabled(false);
+  myMenu.addAction(actionVoid);
+  myMenu.addSeparator();
+
+  QAction *actionCreateInstance = new QAction(tr("Create instance"), this);
+  actionCreateInstance->setToolTip(ui->actionAddInstance->toolTip());
+  connect(actionCreateInstance, SIGNAL(triggered(bool)),
+          SLOT(on_actionAddInstance_triggered()));
+  myMenu.addAction(actionCreateInstance);
+
+  QAction *actionCreateGroup = new QAction(tr("Create group"), this);
+  connect(actionCreateGroup, &QAction::triggered, this, [this]() {
+    GroupInputDialog dialog(tr("Create group"), tr("Group name:"), QString(), this);
+    if (dialog.exec() == QDialog::Accepted) {
+      QString name = dialog.textValue();
+      if (!name.isEmpty()) {
+        APPLICATION->instances()->addGroup(name);
+      }
+    }
+  });
+  myMenu.addAction(actionCreateGroup);
+
+  myMenu.exec(QCursor::pos());
+}
+
+void MainWindow::showGroupContextMenu(const QString &group) {
+  if (group.isEmpty()) {
+    return;
+  }
+
+  QMenu menu(this);
+  auto *createInstance = menu.addAction(tr("Create instance"));
+  QVariantMap createData;
+  createData.insert("group", group);
+  createInstance->setData(createData);
+  connect(createInstance, &QAction::triggered, this,
+          &MainWindow::on_actionAddInstance_triggered);
+
+  auto *deleteAction = menu.addAction(tr("Delete group '%1'").arg(group));
+  QVariantMap deleteData;
+  deleteData.insert("group", group);
+  deleteAction->setData(deleteData);
+  connect(deleteAction, &QAction::triggered, this, &MainWindow::deleteGroup);
+  menu.exec(QCursor::pos());
 }
 
 void MainWindow::searchTextChanged(const QString &text) {
@@ -1768,6 +2005,8 @@ void MainWindow::defaultAccountChanged() {
   if (!account) {
 
     accountMenuButton->setIcon(APPLICATION->getThemedIcon("accounts"));
+    m_accountIconUrl = "";
+    emit accountIconChanged();
 
     accountMenuButton->setToolTip(tr("Accounts"));
 
@@ -1791,11 +2030,19 @@ void MainWindow::defaultAccountChanged() {
   if (face.isNull()) {
 
     accountMenuButton->setIcon(APPLICATION->getThemedIcon("accounts"));
+    m_accountIconUrl = "";
 
   } else {
 
     accountMenuButton->setIcon(face);
+    
+    QByteArray byteArray;
+    QBuffer buffer(&byteArray);
+    buffer.open(QIODevice::WriteOnly);
+    face.save(&buffer, "PNG");
+    m_accountIconUrl = "data:image/png;base64," + byteArray.toBase64();
   }
+  emit accountIconChanged();
 }
 
 bool MainWindow::eventFilter(QObject *obj, QEvent *ev) {
@@ -2481,7 +2728,7 @@ void MainWindow::globalSettingsClosed() {
   proxymodel->sort(0);
 
   updateToolsMenu();
-
+  emit accentColorChanged();
   updateStatusCenter();
 
   update();
@@ -2547,21 +2794,13 @@ void MainWindow::on_actionDeleteInstance_triggered() {
 
   auto id = m_selectedInstance->id();
 
-  auto response = CustomMessageBox::selectable(
-
+  auto response = CustomMessageBox::warning(
                       this, tr("CAREFUL!"),
-
                       tr("About to delete: %1\nThis is permanent and will "
-
                          "completely delete the instance.\n\nAre you sure?")
-
                           .arg(m_selectedInstance->name()),
-
-                      QMessageBox::Warning, QMessageBox::Yes | QMessageBox::No,
-
-                      QMessageBox::No)
-
-                      ->exec();
+                      QMessageBox::Yes | QMessageBox::No,
+                      QMessageBox::No);
 
   if (response == QMessageBox::Yes) {
 

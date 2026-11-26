@@ -25,6 +25,7 @@
 #include <QStackedWidget>
 #include <QPushButton>
 #include <QPixmap>
+#include <QVariant>
 
 #include "BaseInstance.h"
 #include "minecraft/auth/MinecraftAccount.h"
@@ -51,12 +52,22 @@ class QSystemTrayIcon;
 
 class MainWindow : public QMainWindow {
   Q_OBJECT
+  Q_PROPERTY(QString accentColor READ getAccentColor NOTIFY accentColorChanged)
+  Q_PROPERTY(QString themeName READ getThemeName NOTIFY accentColorChanged)
+  Q_PROPERTY(QString accountIconUrl READ getAccountIconUrl NOTIFY accountIconChanged)
 
   class Ui;
 
 public:
   explicit MainWindow(QWidget *parent = 0);
   ~MainWindow();
+
+  Q_INVOKABLE QString getThemedIconUrl(const QString &name) const;
+  QString getAccentColor() const;
+  QString getThemeName() const;
+  QString getAccountIconUrl() const { return m_accountIconUrl; }
+
+  InstanceProxyModel *proxymodel = nullptr;
 
   bool eventFilter(QObject *obj, QEvent *ev) override;
   void closeEvent(QCloseEvent *event) override;
@@ -76,13 +87,17 @@ public slots:
   void updatesAllowedChanged(bool allowed);
 
   void droppedURLs(QList<QUrl> urls);
+
 signals:
   void isClosing();
+  void isShowingSettingsChanged(bool isShowing);
+  void accentColorChanged();
+  void accountIconChanged();
 
 protected:
   QMenu *createPopupMenu() override;
 
-private slots:
+public slots:
   void onCatToggled(bool);
 
   void on_actionAbout_triggered();
@@ -167,7 +182,18 @@ private slots:
    */
   void iconUpdated(QString);
 
-  void showInstanceContextMenu(const QPoint &);
+  Q_INVOKABLE QString getWallpaper() const;
+  Q_INVOKABLE QVariantList getInstanceGroups() const;
+  Q_INVOKABLE int getSortModeIndex() const;
+  Q_INVOKABLE void searchTextChanged(const QString &text);
+  Q_INVOKABLE void sortModeChanged(int index);
+  Q_INVOKABLE void setGroupCollapsed(const QString &group, bool collapsed);
+
+  Q_INVOKABLE void showInstanceContextMenu(const QPoint &pos = QPoint());
+  Q_INVOKABLE void showInstanceContextMenuFromQml();
+  Q_INVOKABLE void showEmptySpaceContextMenu();
+  Q_INVOKABLE void showGroupContextMenu(const QString &group);
+  Q_INVOKABLE void showHelpMenu();
 
   void updateToolsMenu();
 
@@ -198,9 +224,6 @@ public:
 
   void changeActiveAccount();
 
-  void searchTextChanged(const QString &text);
-
-  void sortModeChanged(int index);
   void droppedURLsOnIndex(QList<QUrl> urls, QModelIndex index);
 
   void repopulateAccountsMenu();
@@ -223,7 +246,10 @@ private:
   void activateInstance(InstancePtr instance);
   void setCatBackground(bool enabled);
   void updateInstanceToolIcon(QString new_icon);
+  
+public slots:
   void setSelectedInstanceById(const QString &id);
+private:
   void updateStatusCenter();
 
   void runModalTask(Task *task);
@@ -235,7 +261,7 @@ private:
 
   // these are managed by Qt's memory management model!
   InstanceView *view = nullptr;
-  InstanceProxyModel *proxymodel = nullptr;
+  
   QToolButton *newsLabel = nullptr;
   QLabel *m_statusLeft = nullptr;
   QLabel *m_statusCenter = nullptr;
@@ -263,4 +289,6 @@ private:
   // Background image caching
   QPixmap m_cachedBackground;
   void updateCachedBackground();
+
+  QString m_accountIconUrl;
 };

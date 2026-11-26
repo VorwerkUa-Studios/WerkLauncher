@@ -16,6 +16,7 @@
 #include "YggdrasilStep.h"
 #include "minecraft/auth/AuthRequest.h"
 #include "minecraft/auth/Parsers.h"
+#include "minecraft/auth/SyncUrl.h"
 #include <QFile>
 #include <QHttpMultiPart>
 #include <QJsonDocument>
@@ -42,6 +43,12 @@ void YggdrasilLoginStep::perform() {
   if (url.scheme().isEmpty())
     url.setScheme("https");
   url.setPath(url.path() + "/authenticate");
+  if (!isSafeSyncUrl(url)) {
+    emit finished(AccountTaskState::STATE_FAILED_SOFT,
+                  tr("Refusing to send skin synchronization credentials over "
+                     "plain HTTP to a remote host."));
+    return;
+  }
 
   QJsonObject agent;
   agent["name"] = "Minecraft";
@@ -177,15 +184,19 @@ QString YggdrasilSetSkinStep::describe() {
 }
 
 void YggdrasilSetSkinStep::perform() {
+  qDebug() << "[SKIN_UPLOAD] === YggdrasilSetSkinStep::perform() ===";
+  qDebug() << "[SKIN_UPLOAD] skinData size:" << m_skinData.size() << "bytes";
+  qDebug() << "[SKIN_UPLOAD] model:" << (m_model == Skins::Model::Slim ? "SLIM" : "CLASSIC");
+
   QString syncUrl = m_data->syncUrl;
   if (syncUrl.isEmpty()) {
     syncUrl = "https://vorwerkua.alwaysdata.net/api/yggdrasil";
-    qDebug() << "[MSSS_DIAG] SetSkin syncUrl is empty, using fallback:"
-             << syncUrl;
+    qDebug() << "[SKIN_UPLOAD] syncUrl is empty, using fallback:" << syncUrl;
   }
+  qDebug() << "[SKIN_UPLOAD] syncUrl:" << syncUrl;
 
   if (m_data->yggdrasilToken.token.isEmpty()) {
-    qWarning() << "[MSSS_DIAG] No token, skipping skin upload.";
+    qWarning() << "[SKIN_UPLOAD] No token, skipping skin upload.";
     emit finished(AccountTaskState::STATE_WORKING, "");
     return;
   }
@@ -194,6 +205,12 @@ void YggdrasilSetSkinStep::perform() {
   if (url.scheme().isEmpty())
     url.setScheme("https");
   url.setPath(url.path() + "/minecraft/profile/skins");
+  if (!isSafeSyncUrl(url)) {
+    emit finished(AccountTaskState::STATE_FAILED_SOFT,
+                  tr("Refusing to send skin synchronization credentials over "
+                     "plain HTTP to a remote host."));
+    return;
+  }
 
   QNetworkRequest request(url);
   request.setRawHeader(
@@ -236,12 +253,18 @@ void YggdrasilSetSkinStep::onRequestDone(QNetworkReply::NetworkError error,
   auto requestor = qobject_cast<AuthRequest *>(QObject::sender());
   requestor->deleteLater();
 
+  qDebug() << "[SKIN_UPLOAD] onRequestDone error:" << error
+           << "response size:" << data.size()
+           << "response:" << QString::fromUtf8(data.left(500));
+
   if (error != QNetworkReply::NoError) {
     auto parsedError = MojangError::fromJSON(data, error);
+    qWarning() << "[SKIN_UPLOAD] FAILED:" << parsedError.toString();
     emit finished(AccountTaskState::STATE_FAILED_SOFT,
                   tr("Failed to upload skin: %1").arg(parsedError.toString()));
     return;
   }
+  qDebug() << "[SKIN_UPLOAD] SUCCESS! Updating local skin data...";
 
   // Proactively update local data so the UI reflects the change immediately
   m_data->minecraftProfile.skin.data = m_skinData;

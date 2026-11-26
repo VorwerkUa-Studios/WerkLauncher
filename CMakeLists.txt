@@ -115,7 +115,7 @@ else()
     list(APPEND CMAKE_PREFIX_PATH "C:/Qt/6.10.2/msvc2022_64")
 endif()
 list(APPEND CMAKE_PREFIX_PATH "$ENV{USERPROFILE}/vcpkg/installed/x64-windows")
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets Concurrent Network NetworkAuth Test Xml Svg OpenGL)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Concurrent Network NetworkAuth Test Xml Svg OpenGL Quick Qml QuickControls2 QuickWidgets)
 
 if(WIN32)
     if(DEFINED ENV{VCPKG_INSTALLATION_ROOT})

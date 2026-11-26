@@ -36,6 +36,7 @@ class MCEditTool;
 class CapeCache;
 class SkinsModel;
 class DiscordRPC;
+class QQmlApplicationEngine;
 
 namespace Meta {
 class Index;
@@ -57,6 +58,7 @@ public:
   virtual ~Application();
 
   std::shared_ptr<SettingsObject> settings() const { return m_settings; }
+  QQmlApplicationEngine *qmlEngine() const { return m_qmlEngine; }
 
   qint64 timeSinceStart() const {
     return startTime.msecsTo(QDateTime::currentDateTime());
@@ -223,6 +225,7 @@ private:
 
   SetupWizard *m_setupWizard = nullptr;
   DiscordRPC *m_discordRPC = nullptr;
+  QQmlApplicationEngine *m_qmlEngine = nullptr;
 
   // Launch parameters (set during command-line parsing, consumed at startup)
   QString m_instanceIdToLaunch;

@@ -539,7 +539,7 @@
                  </sizepolicy>
                 </property>
                 <property name="text">
-                 <string notr="true">Get Fresh Code</string>
+                 <string>Get Fresh Code</string>
                 </property>
                 <property name="icon">
                  <iconset theme="edit"/>

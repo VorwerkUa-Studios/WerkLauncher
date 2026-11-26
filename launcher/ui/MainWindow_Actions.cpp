@@ -148,14 +148,13 @@ void MainWindow::on_actionDeleteInstance_triggered() {
     return;
   }
   auto id = m_selectedInstance->id();
-  auto response = CustomMessageBox::selectable(
+  auto response = CustomMessageBox::warning(
                       this, tr("CAREFUL!"),
                       tr("About to delete: %1\nThis is permanent and will "
                          "completely delete the instance.\n\nAre you sure?")
                           .arg(m_selectedInstance->name()),
                       QMessageBox::Warning, QMessageBox::Yes | QMessageBox::No,
-                      QMessageBox::No)
-                      ->exec();
+                      QMessageBox::No);
   if (response == QMessageBox::Yes) {
     APPLICATION->instances()->deleteInstance(id);
   }

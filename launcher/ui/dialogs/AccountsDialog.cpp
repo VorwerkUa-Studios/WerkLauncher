@@ -1,6 +1,8 @@
 #include "AccountsDialog.h"
 #include "ui_AccountsDialog.h"
 
+#include "CustomMessageBox.h"
+
 #include <QBoxLayout>
 #include <QCloseEvent>
 #include <QDebug>
@@ -10,6 +12,12 @@
 #include <QPushButton>
 #include <QStatusBar>
 #include <QVBoxLayout>
+#include <QMenu>
+#include <QAction>
+#include <QUrl>
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QJsonObject>
 
 #include "../widgets/CustomTitleBar.h"
 #include "Application.h"
@@ -25,6 +33,7 @@
 #include "skins/CapesModel.h"
 #include "skins/SkinUtils.h"
 #include "skins/SkinsModel.h"
+#include "minecraft/auth/SyncUrl.h"
 
 #include <QClipboard>
 #include <QMessageBox>
@@ -35,6 +44,29 @@
 constexpr auto selectionFlags =
     QItemSelectionModel::Clear | QItemSelectionModel::Select |
     QItemSelectionModel::Rows | QItemSelectionModel::Current;
+
+namespace {
+QUrl skinHistoryUrl(const MinecraftAccountPtr &account, const QString &path) {
+  QString syncUrl = account->accountData()->syncUrl;
+  if (syncUrl.isEmpty()) {
+    syncUrl = APPLICATION->settings()->get("GlobalSkinSyncUrl").toString();
+  }
+  if (syncUrl.isEmpty()) {
+    syncUrl = "https://vorwerkua.alwaysdata.net/api/yggdrasil";
+  }
+
+  QUrl url(syncUrl);
+  if (url.scheme().isEmpty()) {
+    url.setScheme("https");
+  }
+  QString basePath = url.path();
+  if (basePath.endsWith('/')) {
+    basePath.chop(1);
+  }
+  url.setPath(basePath + path);
+  return url;
+}
+} // namespace
 
 AccountsDialog::AccountsDialog(QWidget *parent, const QString &internalId)
     : QWidget(parent), ui(new Ui::AccountsDialog) {
@@ -87,6 +119,10 @@ AccountsDialog::AccountsDialog(QWidget *parent, const QString &internalId)
           &AccountsDialog::onSaveSkinClicked);
   connect(ui->openSkinsButton, &QPushButton::clicked, this,
           &AccountsDialog::onOpenSkinsFolderClicked);
+          
+  ui->skinsView->setContextMenuPolicy(Qt::CustomContextMenu);
+  connect(ui->skinsView, &QWidget::customContextMenuRequested, this,
+          &AccountsDialog::onSkinContextMenu);
 
   connect(ui->signOutButton, &QPushButton::clicked, [&](bool on) {
     qCDebug(L_ACCOUNTS) << "Normal Sign Out button clicked";
@@ -255,7 +291,7 @@ void AccountsDialog::onApplyChangesClicked(bool) {
     connect(task.get(), &AccountTask::apiError,
             [this, account](const MojangError &error) {
               if (m_currentAccount == account) {
-                QMessageBox::critical(this, tr("Failed to apply skin"),
+                CustomMessageBox::critical(this, tr("Failed to apply skin"),
                                       error.toString());
               }
             });
@@ -293,6 +329,123 @@ bool AccountsDialog::startSkinEdit() {
   ui->btnResetChanges->setEnabled(true);
   m_skinEdit = m_playerSkinState;
   return true;
+}
+
+void AccountsDialog::onSkinContextMenu(const QPoint &pos) {
+    QModelIndex index = ui->skinsView->indexAt(pos);
+    if (!index.isValid()) return;
+
+    QString key = index.data(Qt::DisplayRole).toString();
+
+    QMenu menu(this);
+    QAction *deleteLocalAction = menu.addAction(tr("Видалити з ПК"));
+    deleteLocalAction->setToolTip(tr("Видалити цей скін лише з вашого комп'ютера. Він залишиться збереженим на сервері."));
+    
+    QAction *deleteEverywhereAction = menu.addAction(tr("Видалити звідусіль"));
+    deleteEverywhereAction->setToolTip(tr("Повністю видалити цей скін з вашого ПК та з сервера назавжди."));
+
+    QAction *selectedItem = menu.exec(ui->skinsView->mapToGlobal(pos));
+    
+    if (selectedItem == deleteLocalAction || selectedItem == deleteEverywhereAction) {
+        // Delete locally
+        m_skinsModel->deleteSkin(key);
+        revertEdits();
+        
+        if (selectedItem == deleteEverywhereAction) {
+            // Delete from database
+            if (!m_currentAccount) return;
+            QString filename = key + ".png";
+            deleteSkinHistory(filename);
+        }
+    }
+}
+
+void AccountsDialog::fetchSkinHistory() {
+    if (!m_currentAccount || m_currentAccount->accessToken().isEmpty()) return;
+    if (m_currentAccount->typeString() != "offline" && m_currentAccount->typeString() != "yggdrasil") { // Assuming custom Yggdrasil backend
+        return; // Mojang or LittleSkin don't support our custom history endpoint
+    }
+
+    QNetworkRequest request(skinHistoryUrl(
+        m_currentAccount, "/minecraft/profile/skins/history"));
+    if (!isSafeSyncUrl(request.url())) {
+        qWarning() << "Refusing to send skin synchronization credentials over "
+                      "plain HTTP to a remote host.";
+        return;
+    }
+    request.setRawHeader(
+        "Authorization",
+        QString("Bearer %1").arg(m_currentAccount->accessToken()).toUtf8());
+
+    AuthRequest *requestor = new AuthRequest(this);
+    connect(requestor, &AuthRequest::finished, this, &AccountsDialog::onSkinHistoryFetched);
+    requestor->get(request);
+}
+
+void AccountsDialog::onSkinHistoryFetched(QNetworkReply::NetworkError error, QByteArray data, QList<QNetworkReply::RawHeaderPair> headers) {
+    auto requestor = qobject_cast<AuthRequest *>(QObject::sender());
+    if (requestor) requestor->deleteLater();
+
+    if (error == QNetworkReply::NoError) {
+        QJsonDocument doc = QJsonDocument::fromJson(data);
+        if (doc.isArray()) {
+            QJsonArray arr = doc.array();
+            for (int i = 0; i < arr.size(); ++i) {
+                QJsonObject obj = arr[i].toObject();
+                QString url = obj.value("url").toString();
+                QString filename = obj.value("filename").toString();
+                // Download and add to skins model if it doesn't exist
+                QString key = QFileInfo(filename).baseName();
+                if (m_skinsModel->skinEntry(key).isNull()) {
+                    // Start download task
+                    // For simplicity, we can just use AuthRequest to GET the image
+                    QNetworkRequest req((QUrl(url)));
+                    AuthRequest *dlRequest = new AuthRequest(this);
+                    dlRequest->setProperty("filename", filename);
+                    connect(dlRequest, &AuthRequest::finished, this, [this](QNetworkReply::NetworkError err, QByteArray d, QList<QNetworkReply::RawHeaderPair> h){
+                        auto dlReq = qobject_cast<AuthRequest *>(QObject::sender());
+                        if (dlReq) {
+                            if (err == QNetworkReply::NoError && !d.isEmpty()) {
+                                QString fn = dlReq->property("filename").toString();
+                                QString k = QFileInfo(fn).baseName();
+                                m_skinsModel->installSkin(d, k);
+                            }
+                            dlReq->deleteLater();
+                        }
+                    });
+                    dlRequest->get(req);
+                }
+            }
+        }
+    }
+}
+
+void AccountsDialog::deleteSkinHistory(const QString &filename) {
+    if (!m_currentAccount || m_currentAccount->accessToken().isEmpty()) return;
+    QUrl url = skinHistoryUrl(m_currentAccount, "/minecraft/profile/skins/history");
+    if (!isSafeSyncUrl(url)) {
+        qWarning() << "Refusing to send skin synchronization credentials over "
+                      "plain HTTP to a remote host.";
+        return;
+    }
+    QByteArray encodedUrl = url.toEncoded();
+    encodedUrl += '/' + QUrl::toPercentEncoding(filename);
+    QNetworkRequest request(QUrl::fromEncoded(encodedUrl, QUrl::StrictMode));
+    request.setRawHeader(
+        "Authorization",
+        QString("Bearer %1").arg(m_currentAccount->accessToken()).toUtf8());
+
+    AuthRequest *requestor = new AuthRequest(this);
+    connect(requestor, &AuthRequest::finished, this, &AccountsDialog::onSkinHistoryDeleted);
+    requestor->deleteResource(request);
+}
+
+void AccountsDialog::onSkinHistoryDeleted(QNetworkReply::NetworkError error, QByteArray data, QList<QNetworkReply::RawHeaderPair> headers) {
+    auto requestor = qobject_cast<AuthRequest *>(QObject::sender());
+    if (requestor) requestor->deleteLater();
+    if (error != QNetworkReply::NoError) {
+        qCDebug(L_ACCOUNTS) << "Failed to delete skin history:" << error;
+    }
 }
 
 Skins::Model AccountsDialog::effectiveModel() const {
@@ -479,6 +632,7 @@ void AccountsDialog::updateStates() {
   ui->fullAccountPage->setEnabled(accountIsReady);
   if (prevAccount != m_currentAccount) {
     revertEdits();
+    fetchSkinHistory();
   }
 
   m_capesModel->setAccount(m_currentAccount);
@@ -489,11 +643,22 @@ void AccountsDialog::updateStates() {
   QByteArray playerSkinData = m_currentAccount->getSkin();
   QImage image;
   QString textureID;
-  Skins::readSkinFromData(playerSkinData, image, textureID);
+  
+  if (playerSkinData.isEmpty()) {
+      if (m_currentAccount->getSkinModel() == Skins::Model::Slim) {
+          image = QImage(":/skins/textures/Alex_Slim.png");
+      } else {
+          image = QImage(":/skins/textures/Steve_Classic.png");
+      }
+      textureID = "default";
+  } else {
+      Skins::readSkinFromData(playerSkinData, image, textureID);
+  }
+
   auto maybeEntry = m_skinsModel->skinEntryByTextureID(textureID);
   m_playerSkinState = SkinState{
       m_currentAccount->getCurrentCape(), m_currentAccount->getSkinModel(),
-      (!maybeEntry.isNull())
+      (!maybeEntry.isNull() && !playerSkinData.isEmpty())
           ? maybeEntry
           : Skins::SkinEntry("player", "", image, textureID, playerSkinData)};
 
@@ -629,7 +794,7 @@ void AccountsDialog::onLittleSkinLoginClicked(bool) {
   // Enforce lowercase nicknames - server normalizes to lowercase
   QString emailLower = email.toLower();
   if (email != emailLower) {
-    QMessageBox::information(
+    CustomMessageBox::information(
         this, tr("Nickname Corrected"),
         tr("Uppercase letters are not allowed in nicknames.\n\n"
            "\"%1\" has been changed to \"%2\".")
@@ -683,7 +848,7 @@ void AccountsDialog::onLittleSkinLoginClicked(bool) {
             m_loginTask.reset();
             m_loginAccount.reset();
 
-            QMessageBox::critical(this, tr("Login Failed"), reason);
+            CustomMessageBox::critical(this, tr("Login Failed"), reason);
             ui->btnLittleSkinAdd->setEnabled(true);
             ui->btnLittleSkinCancel->setEnabled(true);
             ui->lsEmailEdit->setEnabled(true);

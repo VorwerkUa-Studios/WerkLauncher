@@ -1,0 +1,6 @@
+<RCC>
+    <qresource prefix="/qml">
+        <file alias="Main.qml">../ui/qml/Main.qml</file>
+        <file alias="InstanceCard.qml">../ui/qml/InstanceCard.qml</file>
+    </qresource>
+</RCC>
