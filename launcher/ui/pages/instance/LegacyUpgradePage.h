@@ -22,14 +22,10 @@
 #include <Application.h>
 #include "tasks/Task.h"
 
-namespace Ui
-{
-class LegacyUpgradePage;
-}
-
 class LegacyUpgradePage : public QWidget, public BasePage
 {
     Q_OBJECT
+    Q_PROPERTY(bool upgradeEnabled READ upgradeEnabled NOTIFY upgradeEnabledChanged)
 
 public:
     explicit LegacyUpgradePage(InstancePtr inst, QWidget *parent = 0);
@@ -51,14 +47,19 @@ public:
         return "Legacy-upgrade";
     }
     virtual bool shouldDisplay() const override;
+    bool upgradeEnabled() const;
+
+    Q_INVOKABLE void upgrade();
+
+signals:
+    void upgradeEnabledChanged();
 
 private slots:
-    void on_upgradeButton_clicked();
+    void updateRunningStatus(bool running);
 
 private:
     void runModalTask(Task *task);
 
 private:
-    Ui::LegacyUpgradePage *ui;
     InstancePtr m_inst;
 };

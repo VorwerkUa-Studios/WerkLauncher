@@ -18,54 +18,61 @@
 #include <QWidget>
 
 #include "ui/pages/BasePage.h"
-#include "minecraft/WorldList.h"
 #include "Application.h"
 
-class JavaChecker;
-class InstanceJavaPage;
-namespace Ui
-{
-class InstanceSettingsPage;
-}
+class BaseInstance;
 
 class InstanceSettingsPage : public QWidget, public BasePage
 {
     Q_OBJECT
+    Q_PROPERTY(bool windowOverride READ windowOverride WRITE setWindowOverride NOTIFY settingsChanged)
+    Q_PROPERTY(bool launchMaximized READ launchMaximized WRITE setLaunchMaximized NOTIFY settingsChanged)
+    Q_PROPERTY(int windowWidth READ windowWidth WRITE setWindowWidth NOTIFY settingsChanged)
+    Q_PROPERTY(int windowHeight READ windowHeight WRITE setWindowHeight NOTIFY settingsChanged)
+    Q_PROPERTY(bool consoleOverride READ consoleOverride WRITE setConsoleOverride NOTIFY settingsChanged)
+    Q_PROPERTY(bool showConsole READ showConsole WRITE setShowConsole NOTIFY settingsChanged)
+    Q_PROPERTY(bool autoCloseConsole READ autoCloseConsole WRITE setAutoCloseConsole NOTIFY settingsChanged)
+    Q_PROPERTY(bool showConsoleOnError READ showConsoleOnError WRITE setShowConsoleOnError NOTIFY settingsChanged)
 
 public:
-    explicit InstanceSettingsPage(BaseInstance *inst, QWidget *parent = 0);
-    virtual ~InstanceSettingsPage();
-    virtual QString displayName() const override
-    {
-        return tr("Settings");
-    }
-    virtual QIcon icon() const override
-    {
-        return APPLICATION->getThemedIcon("instance-settings");
-    }
-    virtual QString id() const override
-    {
-        return "settings";
-    }
-    virtual bool apply() override;
-    virtual QString helpPage() const override
-    {
-        return "Instance-settings";
-    }
-    virtual bool shouldDisplay() const override;
+    explicit InstanceSettingsPage(BaseInstance *inst, QWidget *parent = nullptr);
+    ~InstanceSettingsPage() override = default;
 
-private slots:
-    void on_serverAddressRadioButton_toggled(bool checked);
-    void on_worldRadioButton_toggled(bool checked);
+    QString displayName() const override;
+    QIcon icon() const override;
+    QString id() const override;
+    bool apply() override;
+    bool shouldDisplay() const override;
 
-    void applySettings();
-    void loadSettings();
+    bool windowOverride() const { return m_windowOverride; }
+    void setWindowOverride(bool value);
+    bool launchMaximized() const { return m_launchMaximized; }
+    void setLaunchMaximized(bool value);
+    int windowWidth() const { return m_windowWidth; }
+    void setWindowWidth(int value);
+    int windowHeight() const { return m_windowHeight; }
+    void setWindowHeight(int value);
+    bool consoleOverride() const { return m_consoleOverride; }
+    void setConsoleOverride(bool value);
+    bool showConsole() const { return m_showConsole; }
+    void setShowConsole(bool value);
+    bool autoCloseConsole() const { return m_autoCloseConsole; }
+    void setAutoCloseConsole(bool value);
+    bool showConsoleOnError() const { return m_showConsoleOnError; }
+    void setShowConsoleOnError(bool value);
 
-    void globalSettingsButtonClicked(bool checked);
+signals:
+    void settingsChanged();
 
 private:
-    Ui::InstanceSettingsPage *ui;
     BaseInstance *m_instance;
     SettingsObjectPtr m_settings;
-    InstanceJavaPage *m_javaPage = nullptr;
+    bool m_windowOverride = false;
+    bool m_launchMaximized = false;
+    int m_windowWidth = 854;
+    int m_windowHeight = 480;
+    bool m_consoleOverride = false;
+    bool m_showConsole = false;
+    bool m_autoCloseConsole = false;
+    bool m_showConsoleOnError = false;
 };

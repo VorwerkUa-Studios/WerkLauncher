@@ -1,90 +1,66 @@
-/* Copyright 2013-2021 MultiMC Contributors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 #pragma once
 
 #include <QDialog>
-
-#include <memory>
-
+#include <QVariantList>
+#include "QObjectPtr.h"
 #include "minecraft/auth/AccountList.h"
-
-namespace Ui
-{
-class ProfileSelectDialog;
-}
 
 class ProfileSelectDialog : public QDialog
 {
     Q_OBJECT
+    Q_PROPERTY(QString message READ message CONSTANT)
+    Q_PROPERTY(QVariantList accountsList READ accountsList CONSTANT)
+    Q_PROPERTY(int selectedIndex READ selectedIndex WRITE setSelectedIndex NOTIFY selectedIndexChanged)
+    Q_PROPERTY(bool showGlobalDefault READ showGlobalDefault CONSTANT)
+    Q_PROPERTY(bool showInstanceDefault READ showInstanceDefault CONSTANT)
+    Q_PROPERTY(bool useAsGlobalDefault READ useAsGlobalDefault WRITE setUseAsGlobalDefault NOTIFY useAsGlobalDefaultChanged)
+    Q_PROPERTY(bool useAsInstDefault READ useAsInstDefault WRITE setUseAsInstDefault NOTIFY useAsInstDefaultChanged)
+    Q_PROPERTY(bool canAccept READ canAccept NOTIFY selectedIndexChanged)
+
 public:
     enum Flags
     {
         NoFlags = 0,
-
-        /*!
-         * Shows a check box on the dialog that allows the user to specify that the account
-         * they've selected should be used as the global default for all instances.
-         */
-        GlobalDefaultCheckbox,
-
-        /*!
-         * Shows a check box on the dialog that allows the user to specify that the account
-         * they've selected should be used as the default for the instance they are currently launching.
-         * This is not currently implemented.
-         */
-        InstanceDefaultCheckbox,
+        GlobalDefaultCheckbox = 1,
+        InstanceDefaultCheckbox = 2,
     };
 
-    /*!
-     * Constructs a new account select dialog with the given parent and message.
-     * The message will be shown at the top of the dialog. It is an empty string by default.
-     */
-    explicit ProfileSelectDialog(const QString& message="", int flags=0, QWidget *parent = 0);
-    ~ProfileSelectDialog();
+    explicit ProfileSelectDialog(const QString &message = "", int flags = 0, QWidget *parent = nullptr);
+    ~ProfileSelectDialog() override;
 
-    /*!
-     * Gets a pointer to the account that the user selected.
-     * This is null if the user clicked cancel or hasn't clicked OK yet.
-     */
     MinecraftAccountPtr selectedAccount() const;
 
-    /*!
-     * Returns true if the user checked the "use as global default" checkbox.
-     * If the checkbox wasn't shown, this function returns false.
-     */
-    bool useAsGlobalDefault() const;
+    QString message() const { return m_message; }
+    QVariantList accountsList() const;
+    int selectedIndex() const { return m_selectedIndex; }
+    void setSelectedIndex(int index);
 
-    /*!
-     * Returns true if the user checked the "use as instance default" checkbox.
-     * If the checkbox wasn't shown, this function returns false.
-     */
-    bool useAsInstDefaullt() const;
+    bool showGlobalDefault() const { return m_flags & GlobalDefaultCheckbox; }
+    bool showInstanceDefault() const { return m_flags & InstanceDefaultCheckbox; }
 
-public
-slots:
-    void on_buttonBox_accepted();
+    bool useAsGlobalDefault() const { return m_useAsGlobalDefault; }
+    void setUseAsGlobalDefault(bool value);
 
-    void on_buttonBox_rejected();
+    bool useAsInstDefault() const { return m_useAsInstDefault; }
+    void setUseAsInstDefault(bool value);
 
-protected:
-    shared_qobject_ptr<AccountList> m_accounts;
+    bool canAccept() const { return m_selectedIndex >= 0 && m_selectedIndex < m_accountsList.size(); }
 
-    //! The account that was selected when the user clicked OK.
-    MinecraftAccountPtr m_selected;
+    Q_INVOKABLE void acceptDialog();
+    Q_INVOKABLE void rejectDialog();
+
+signals:
+    void selectedIndexChanged();
+    void useAsGlobalDefaultChanged();
+    void useAsInstDefaultChanged();
 
 private:
-    Ui::ProfileSelectDialog *ui;
+    QString m_message;
+    int m_flags = 0;
+    shared_qobject_ptr<AccountList> m_accounts;
+    QList<MinecraftAccountPtr> m_accountsList;
+    int m_selectedIndex = 0;
+    bool m_useAsGlobalDefault = false;
+    bool m_useAsInstDefault = false;
+    MinecraftAccountPtr m_selected;
 };

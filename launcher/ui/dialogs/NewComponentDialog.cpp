@@ -1,104 +1,119 @@
-/* Copyright 2013-2021 MultiMC Contributors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 #include "NewComponentDialog.h"
-#include "Application.h"
+
+#include <QDebug>
+#include <QQuickWidget>
+#include <QRegularExpression>
+#include <QUrl>
+#include <QVBoxLayout>
+
+#include "ui/GuiUtil.h"
 #include "ui/widgets/CustomTitleBar.h"
-#include "ui_NewComponentDialog.h"
-
-#include <BaseVersion.h>
-#include <InstanceList.h>
-#include <icons/IconList.h>
-#include <tasks/Task.h>
-
-#include "IconPickerDialog.h"
-#include "ProgressDialog.h"
-#include "VersionSelectDialog.h"
-
-#include <QFileDialog>
-#include <QLayout>
-#include <QPushButton>
-#include <QValidator>
-
-#include <meta/Index.h>
-#include <meta/VersionList.h>
 
 NewComponentDialog::NewComponentDialog(const QString &initialName,
                                        const QString &initialUid,
                                        QWidget *parent)
-    : QDialog(parent), ui(new Ui::NewComponentDialog) {
-  setWindowFlags(Qt::FramelessWindowHint | windowFlags());
-  ui->setupUi(this);
+    : QDialog(parent),
+      m_name(initialName),
+      m_uid(initialUid),
+      m_originalPlaceholderText(QStringLiteral("org.multimc.custom.component")) {
+    setWindowFlags(Qt::FramelessWindowHint | windowFlags());
+    setWindowTitle(tr("Add Empty Component"));
+    resize(420, 260);
 
-  auto titleBar = new CustomTitleBar(this);
-  titleBar->setTitle(tr("New Component"));
-  ui->verticalLayout->setContentsMargins(0, 0, 0, 0);
-  ui->verticalLayout->setSpacing(0);
-  ui->verticalLayout->insertWidget(0, titleBar);
-  resize(minimumSizeHint());
+    auto *mainLayout = new QVBoxLayout(this);
+    mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->setSpacing(0);
 
-  ui->nameTextBox->setText(initialName);
-  ui->uidTextBox->setText(initialUid);
+    auto *titleBar = new CustomTitleBar(this);
+    titleBar->setTitle(tr("New Component"));
+    mainLayout->addWidget(titleBar);
 
-  connect(ui->nameTextBox, &QLineEdit::textChanged, this,
-          &NewComponentDialog::updateDialogState);
-  connect(ui->uidTextBox, &QLineEdit::textChanged, this,
-          &NewComponentDialog::updateDialogState);
+    auto *qmlWidget = new QQuickWidget(this);
+    qmlWidget->setObjectName(QStringLiteral("newComponentDialogQml"));
+    qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+    qmlWidget->setInitialProperties(
+        {{QStringLiteral("dialogController"),
+          QVariant::fromValue(static_cast<QObject *>(this))}});
 
-  ui->nameTextBox->setFocus();
+    connect(qmlWidget, &QQuickWidget::statusChanged, this,
+            [qmlWidget](QQuickWidget::Status status) {
+                if (status == QQuickWidget::Error) {
+                    for (const auto &err : qmlWidget->errors()) {
+                        qCritical() << "NewComponentDialog QML error:" << err.toString();
+                    }
+                }
+            });
 
-  originalPlaceholderText = ui->uidTextBox->placeholderText();
-  updateDialogState();
+    qmlWidget->setSource(QUrl(QStringLiteral("qrc:/qml/NewComponentDialog.qml")));
+    mainLayout->addWidget(qmlWidget);
+
+    GuiUtil::fitWindowToAvailableScreen(this, size());
+
+    updateDialogState();
 }
 
-NewComponentDialog::~NewComponentDialog() { delete ui; }
+NewComponentDialog::~NewComponentDialog() = default;
 
 void NewComponentDialog::updateDialogState() {
-  auto protoUid = ui->nameTextBox->text().toLower();
-  protoUid.remove(QRegularExpression("[^a-z]"));
-  if (protoUid.isEmpty()) {
-    ui->uidTextBox->setPlaceholderText(originalPlaceholderText);
-  } else {
-    QString suggestedUid = "org.multimc.custom." + protoUid;
-    ui->uidTextBox->setPlaceholderText(suggestedUid);
-  }
-  bool allowOK =
-      !name().isEmpty() && !uid().isEmpty() && !uidBlacklist.contains(uid());
-  ui->buttonBox->button(QDialogButtonBox::Ok)->setEnabled(allowOK);
+    auto protoUid = m_name.toLower();
+    protoUid.remove(QRegularExpression("[^a-z]"));
+    if (protoUid.isEmpty()) {
+        m_placeholderUid = m_originalPlaceholderText;
+    } else {
+        m_placeholderUid = "org.multimc.custom." + protoUid;
+    }
+    emit placeholderUidChanged();
+    emit canAcceptChanged();
 }
 
 QString NewComponentDialog::name() const {
-  auto result = ui->nameTextBox->text();
-  if (result.size()) {
-    return result.trimmed();
-  }
-  return QString();
+    if (!m_name.isEmpty()) {
+        return m_name.trimmed();
+    }
+    return QString();
+}
+
+void NewComponentDialog::setName(const QString &name) {
+    if (m_name != name) {
+        m_name = name;
+        emit nameChanged();
+        updateDialogState();
+    }
 }
 
 QString NewComponentDialog::uid() const {
-  auto result = ui->uidTextBox->text();
-  if (result.size()) {
-    return result.trimmed();
-  }
-  result = ui->uidTextBox->placeholderText();
-  if (result.size() && result != originalPlaceholderText) {
-    return result.trimmed();
-  }
-  return QString();
+    if (!m_uid.trimmed().isEmpty()) {
+        return m_uid.trimmed();
+    }
+    if (!m_placeholderUid.isEmpty() && m_placeholderUid != m_originalPlaceholderText) {
+        return m_placeholderUid.trimmed();
+    }
+    return QString();
+}
+
+void NewComponentDialog::setUid(const QString &uid) {
+    if (m_uid != uid) {
+        m_uid = uid;
+        emit uidChanged();
+        emit canAcceptChanged();
+    }
+}
+
+bool NewComponentDialog::canAccept() const {
+    return !name().isEmpty() && !uid().isEmpty() && !m_uidBlacklist.contains(uid());
 }
 
 void NewComponentDialog::setBlacklist(QStringList badUids) {
-  uidBlacklist = badUids;
+    m_uidBlacklist = badUids;
+    emit canAcceptChanged();
+}
+
+void NewComponentDialog::acceptDialog() {
+    if (canAccept()) {
+        accept();
+    }
+}
+
+void NewComponentDialog::rejectDialog() {
+    reject();
 }

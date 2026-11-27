@@ -1,282 +1,182 @@
+/* Copyright 2013-2023 MultiMC Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #include "InstanceSettingsPage.h"
-#include "ui_InstanceSettingsPage.h"
 
-#include <QFileDialog>
-#include <QDialog>
-#include <QMessageBox>
+#include <QLabel>
+#include <QQuickWidget>
+#include <QStackedLayout>
+#include <QVBoxLayout>
+#include <QQmlError>
+#include <QVariant>
 
-#include <sys.h>
-
-#include "ui/dialogs/VersionSelectDialog.h"
-#include "ui/widgets/CustomCommands.h"
-
-#include "JavaCommon.h"
 #include "Application.h"
-
-#include "java/JavaInstallList.h"
-#include "FileSystem.h"
-#include "ui/pages/instance/InstanceJavaPage.h"
-
-#include "minecraft/MinecraftInstance.h"
-#include "minecraft/PackProfile.h"
-#include "minecraft/VersionFilterData.h"
-#include "minecraft/WorldList.h"
+#include "BaseInstance.h"
 
 InstanceSettingsPage::InstanceSettingsPage(BaseInstance *inst, QWidget *parent)
-    : QWidget(parent), ui(new Ui::InstanceSettingsPage), m_instance(inst)
-{
-    m_settings = inst->settings();
-    ui->setupUi(this);
-    connect(ui->openGlobalJavaSettingsButton, &QCommandLinkButton::clicked, this, &InstanceSettingsPage::globalSettingsButtonClicked);
-    connect(APPLICATION, &Application::globalSettingsAboutToOpen, this, &InstanceSettingsPage::applySettings);
-    connect(APPLICATION, &Application::globalSettingsClosed, this, &InstanceSettingsPage::loadSettings);
+    : QWidget(parent), m_instance(inst), m_settings(inst->settings()) {
+    m_windowOverride = m_settings->get("OverrideWindow").toBool();
+    m_launchMaximized = m_settings->get("LaunchMaximized").toBool();
+    m_windowWidth = qBound(1, m_settings->get("MinecraftWinWidth").toInt(), 65536);
+    m_windowHeight = qBound(1, m_settings->get("MinecraftWinHeight").toInt(), 65536);
+    m_consoleOverride = m_settings->get("OverrideConsole").toBool();
+    m_showConsole = m_settings->get("ShowConsole").toBool();
+    m_autoCloseConsole = m_settings->get("AutoCloseConsole").toBool();
+    m_showConsoleOnError = m_settings->get("ShowConsoleOnError").toBool();
 
-    // Embed Java page dynamically
-    ui->settingsTabs->removeTab(0); // Remove dummy "Java" tab
-    m_javaPage = new InstanceJavaPage(inst, this);
-    ui->settingsTabs->insertTab(0, m_javaPage, tr("Java"));
+    auto *layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
 
-    ui->openGlobalJavaSettingsButton->hide();
-    
-    // Remove unwanted tabs to simplify UI
-    for (int i = ui->settingsTabs->count() - 1; i >= 0; --i) {
-        QWidget *t = ui->settingsTabs->widget(i);
-        if (t == ui->tab || 
-            t == ui->workaroundsPage || 
-            t == ui->miscellaneousPage) {
-            ui->settingsTabs->removeTab(i);
+    auto *stack = new QStackedLayout;
+    layout->addLayout(stack);
+
+    auto *qmlWidget = new QQuickWidget(this);
+    qmlWidget->setObjectName(QStringLiteral("instanceSettingsQml"));
+    qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+    qmlWidget->setInitialProperties(
+        {{QStringLiteral("settingsController"),
+          QVariant::fromValue(static_cast<QObject *>(this))}});
+    stack->addWidget(qmlWidget);
+    stack->setCurrentWidget(qmlWidget);
+
+    auto *errorLabel = new QLabel(this);
+    errorLabel->setAlignment(Qt::AlignCenter);
+    errorLabel->setWordWrap(true);
+    errorLabel->setText(tr("The instance settings page could not be loaded."));
+    stack->addWidget(errorLabel);
+
+    const auto showLoadError = [qmlWidget, stack, errorLabel]() {
+        QStringList details;
+        for (const auto &error : qmlWidget->errors()) {
+            details.append(error.toString());
         }
-    }
-
-    bool supportsQuickPlay = false;
-    auto *mcInst = dynamic_cast<MinecraftInstance *>(inst);
-    if (mcInst)
-    {
-        auto minecraftComponent = mcInst->getPackProfile()->getComponent("net.minecraft");
-        if(minecraftComponent && minecraftComponent->getReleaseDateTime() >= g_VersionFilterData.quickPlayBeginsDate)
-        {
-            supportsQuickPlay = true;
+        if (details.isEmpty()) {
+            details.append(QObject::tr("No QML diagnostic was provided."));
         }
-    }
+        qCritical() << "Instance settings QML failed to load:"
+                    << details.join('\n');
+        errorLabel->setToolTip(details.join('\n'));
+        stack->setCurrentWidget(errorLabel);
+    };
 
-    if(supportsQuickPlay)
-    {
-        mcInst->worldList()->update();
-        for (const auto &world : mcInst->worldList()->allWorlds())
-        {
-            ui->worldsComboBox->addItem(world.folderName());
-        }
-    }
-    else
-    {
-        ui->worldRadioButton->setVisible(false);
-        ui->worldsComboBox->setVisible(false);
-        ui->serverAddressRadioButton->setChecked(true);
-        connect(ui->quickPlayGroupBox, &QGroupBox::toggled, ui->serverJoinAddress, &QLineEdit::setEnabled);
-    }
-
-    loadSettings();
-}
-
-bool InstanceSettingsPage::shouldDisplay() const
-{
-    return !m_instance->isRunning();
-}
-
-InstanceSettingsPage::~InstanceSettingsPage()
-{
-    delete ui;
-}
-
-void InstanceSettingsPage::globalSettingsButtonClicked(bool)
-{
-    switch(ui->settingsTabs->currentIndex()) {
-        case 0:
-            APPLICATION->ShowGlobalSettings(this, "minecraft-settings");
-            return;
-        case 1:
-            APPLICATION->ShowGlobalSettings(this, "custom-commands");
-            return;
+    connect(qmlWidget, &QQuickWidget::statusChanged, this,
+            [qmlWidget, showLoadError](QQuickWidget::Status status) {
+                if (status == QQuickWidget::Error ||
+                    (status == QQuickWidget::Ready &&
+                     !qmlWidget->rootObject())) {
+                    showLoadError();
+                }
+            });
+    qmlWidget->setSource(QUrl(QStringLiteral("qrc:/qml/InstanceSettings.qml")));
+    if (qmlWidget->status() == QQuickWidget::Error ||
+        (qmlWidget->status() == QQuickWidget::Ready &&
+         !qmlWidget->rootObject())) {
+        showLoadError();
     }
 }
 
-bool InstanceSettingsPage::apply()
-{
-    applySettings();
-    if(m_javaPage) {
-        m_javaPage->apply();
-    }
-    return true;
+QString InstanceSettingsPage::displayName() const {
+    return tr("Settings");
 }
 
-void InstanceSettingsPage::applySettings()
-{
+QIcon InstanceSettingsPage::icon() const {
+    return APPLICATION->getThemedIcon("instance-settings");
+}
+
+QString InstanceSettingsPage::id() const {
+    return QStringLiteral("settings");
+}
+
+bool InstanceSettingsPage::apply() {
     SettingsObject::Lock lock(m_settings);
 
-    // Console
-    bool console = ui->consoleSettingsBox->isChecked();
-    m_settings->set("OverrideConsole", console);
-    if (console)
-    {
-        m_settings->set("ShowConsole", ui->showConsoleCheck->isChecked());
-        m_settings->set("AutoCloseConsole", ui->autoCloseConsoleCheck->isChecked());
-        m_settings->set("ShowConsoleOnError", ui->showConsoleErrorCheck->isChecked());
-    }
-    else
-    {
-        m_settings->reset("ShowConsole");
-        m_settings->reset("AutoCloseConsole");
-        m_settings->reset("ShowConsoleOnError");
-    }
-
-    // Window Size
-    bool window = ui->windowSizeGroupBox->isChecked();
-    m_settings->set("OverrideWindow", window);
-    if (window)
-    {
-        m_settings->set("LaunchMaximized", ui->maximizedCheckBox->isChecked());
-        m_settings->set("MinecraftWinWidth", ui->windowWidthSpinBox->value());
-        m_settings->set("MinecraftWinHeight", ui->windowHeightSpinBox->value());
-    }
-    else
-    {
+    m_settings->set("OverrideWindow", m_windowOverride);
+    if (m_windowOverride) {
+        m_settings->set("LaunchMaximized", m_launchMaximized);
+        m_settings->set("MinecraftWinWidth", m_windowWidth);
+        m_settings->set("MinecraftWinHeight", m_windowHeight);
+    } else {
         m_settings->reset("LaunchMaximized");
         m_settings->reset("MinecraftWinWidth");
         m_settings->reset("MinecraftWinHeight");
     }
 
-    // Custom Commands
-    bool custcmd = ui->customCommands->checked();
-    m_settings->set("OverrideCommands", custcmd);
-    if (custcmd)
-    {
-        m_settings->set("PreLaunchCommand", ui->customCommands->prelaunchCommand());
-        m_settings->set("WrapperCommand", ui->customCommands->wrapperCommand());
-        m_settings->set("PostExitCommand", ui->customCommands->postexitCommand());
-    }
-    else
-    {
-        m_settings->reset("PreLaunchCommand");
-        m_settings->reset("WrapperCommand");
-        m_settings->reset("PostExitCommand");
+    m_settings->set("OverrideConsole", m_consoleOverride);
+    if (m_consoleOverride) {
+        m_settings->set("ShowConsole", m_showConsole);
+        m_settings->set("AutoCloseConsole", m_autoCloseConsole);
+        m_settings->set("ShowConsoleOnError", m_showConsoleOnError);
+    } else {
+        m_settings->reset("ShowConsole");
+        m_settings->reset("AutoCloseConsole");
+        m_settings->reset("ShowConsoleOnError");
     }
 
-    // Workarounds
-    bool workarounds = ui->nativeWorkaroundsGroupBox->isChecked();
-    m_settings->set("OverrideNativeWorkarounds", workarounds);
-    if(workarounds)
-    {
-        m_settings->set("UseNativeOpenAL", ui->useNativeOpenALCheck->isChecked());
-        m_settings->set("UseNativeGLFW", ui->useNativeGLFWCheck->isChecked());
-    }
-    else
-    {
-        m_settings->reset("UseNativeOpenAL");
-        m_settings->reset("UseNativeGLFW");
-    }
-
-    // Game time
-    bool gameTime = ui->gameTimeGroupBox->isChecked();
-    m_settings->set("OverrideGameTime", gameTime);
-    if (gameTime)
-    {
-        m_settings->set("ShowGameTime", ui->showGameTime->isChecked());
-        m_settings->set("RecordGameTime", ui->recordGameTime->isChecked());
-    }
-    else
-    {
-        m_settings->reset("ShowGameTime");
-        m_settings->reset("RecordGameTime");
-    }
-
-    // Join server on launch
-    bool joinWorldOnLaunch = ui->quickPlayGroupBox->isChecked();
-    m_settings->set("JoinWorldOnLaunch", joinWorldOnLaunch);
-
-    bool joinServerOnLaunch = ui->serverAddressRadioButton->isChecked();
-    m_settings->set("JoinServerOnLaunch", joinServerOnLaunch);
-
-    if (joinServerOnLaunch)
-    {
-        m_settings->set("JoinServerOnLaunchAddress", ui->serverJoinAddress->text());
-    }
-    else
-    {
-        m_settings->reset("JoinServerOnLaunchAddress");
-    }
-
-    bool joinSingleplayerWorldOnLaunch = ui->worldRadioButton->isChecked();
-    m_settings->set("JoinSingleplayerWorldOnLaunch", joinSingleplayerWorldOnLaunch);
-
-    if (joinSingleplayerWorldOnLaunch)
-    {
-        m_settings->set("JoinSingleplayerWorldOnLaunchName", ui->worldsComboBox->currentText());
-    }
-    else
-    {
-        m_settings->reset("JoinSingleplayerWorldOnLaunchName");
-    }
+    return true;
 }
 
-void InstanceSettingsPage::loadSettings()
-{
-    // Console
-    ui->consoleSettingsBox->setChecked(m_settings->get("OverrideConsole").toBool());
-    ui->showConsoleCheck->setChecked(m_settings->get("ShowConsole").toBool());
-    ui->autoCloseConsoleCheck->setChecked(m_settings->get("AutoCloseConsole").toBool());
-    ui->showConsoleErrorCheck->setChecked(m_settings->get("ShowConsoleOnError").toBool());
-
-    // Window Size
-    ui->windowSizeGroupBox->setChecked(m_settings->get("OverrideWindow").toBool());
-    ui->maximizedCheckBox->setChecked(m_settings->get("LaunchMaximized").toBool());
-    ui->windowWidthSpinBox->setValue(m_settings->get("MinecraftWinWidth").toInt());
-    ui->windowHeightSpinBox->setValue(m_settings->get("MinecraftWinHeight").toInt());
-
-    // Custom commands
-    ui->customCommands->initialize(
-        true,
-        m_settings->get("OverrideCommands").toBool(),
-        m_settings->get("PreLaunchCommand").toString(),
-        m_settings->get("WrapperCommand").toString(),
-        m_settings->get("PostExitCommand").toString()
-    );
-
-    // Workarounds
-    ui->nativeWorkaroundsGroupBox->setChecked(m_settings->get("OverrideNativeWorkarounds").toBool());
-    ui->useNativeGLFWCheck->setChecked(m_settings->get("UseNativeGLFW").toBool());
-    ui->useNativeOpenALCheck->setChecked(m_settings->get("UseNativeOpenAL").toBool());
-
-    // Miscellanous
-    ui->gameTimeGroupBox->setChecked(m_settings->get("OverrideGameTime").toBool());
-    ui->showGameTime->setChecked(m_settings->get("ShowGameTime").toBool());
-    ui->recordGameTime->setChecked(m_settings->get("RecordGameTime").toBool());
-
-    if (!m_settings->contains("JoinWorldOnLaunch"))
-    {
-        ui->quickPlayGroupBox->setChecked(m_settings->get("JoinServerOnLaunch").toBool());
-        ui->serverAddressRadioButton->setChecked(m_settings->get("JoinServerOnLaunch").toBool());
-        ui->worldRadioButton->setChecked(false);
-    }
-    else
-    {
-        ui->quickPlayGroupBox->setChecked(m_settings->get("JoinWorldOnLaunch").toBool());
-        ui->serverAddressRadioButton->setChecked(m_settings->get("JoinServerOnLaunch").toBool());
-        ui->serverJoinAddress->setEnabled(m_settings->get("JoinServerOnLaunch").toBool());
-        ui->serverJoinAddress->setText(m_settings->get("JoinServerOnLaunchAddress").toString());
-        ui->worldRadioButton->setChecked(m_settings->get("JoinSingleplayerWorldOnLaunch").toBool());
-        ui->worldsComboBox->setEnabled(m_settings->get("JoinSingleplayerWorldOnLaunch").toBool());
-        ui->worldsComboBox->setCurrentText(m_settings->get("JoinSingleplayerWorldOnLaunchName").toString());
-    }
-
+bool InstanceSettingsPage::shouldDisplay() const {
+    return m_instance && !m_instance->isRunning();
 }
 
-void InstanceSettingsPage::on_serverAddressRadioButton_toggled(bool checked)
-{
-    ui->serverJoinAddress->setEnabled(checked);
+void InstanceSettingsPage::setWindowOverride(bool value) {
+    if (m_windowOverride == value) return;
+    m_windowOverride = value;
+    emit settingsChanged();
 }
 
-void InstanceSettingsPage::on_worldRadioButton_toggled(bool checked)
-{
-    ui->worldsComboBox->setEnabled(checked);
+void InstanceSettingsPage::setLaunchMaximized(bool value) {
+    if (m_launchMaximized == value) return;
+    m_launchMaximized = value;
+    emit settingsChanged();
 }
 
+void InstanceSettingsPage::setWindowWidth(int value) {
+    value = qBound(1, value, 65536);
+    if (m_windowWidth == value) return;
+    m_windowWidth = value;
+    emit settingsChanged();
+}
+
+void InstanceSettingsPage::setWindowHeight(int value) {
+    value = qBound(1, value, 65536);
+    if (m_windowHeight == value) return;
+    m_windowHeight = value;
+    emit settingsChanged();
+}
+
+void InstanceSettingsPage::setConsoleOverride(bool value) {
+    if (m_consoleOverride == value) return;
+    m_consoleOverride = value;
+    emit settingsChanged();
+}
+
+void InstanceSettingsPage::setShowConsole(bool value) {
+    if (m_showConsole == value) return;
+    m_showConsole = value;
+    emit settingsChanged();
+}
+
+void InstanceSettingsPage::setAutoCloseConsole(bool value) {
+    if (m_autoCloseConsole == value) return;
+    m_autoCloseConsole = value;
+    emit settingsChanged();
+}
+
+void InstanceSettingsPage::setShowConsoleOnError(bool value) {
+    if (m_showConsoleOnError == value) return;
+    m_showConsoleOnError = value;
+    emit settingsChanged();
+}

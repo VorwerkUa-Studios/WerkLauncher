@@ -3,6 +3,8 @@
 #include <QClipboard>
 #include <QApplication>
 #include <QFileDialog>
+#include <QGuiApplication>
+#include <QScreen>
 
 #include "ui/dialogs/ProgressDialog.h"
 #include "ui/dialogs/CustomMessageBox.h"
@@ -58,6 +60,40 @@ QString GuiUtil::uploadPaste(const QString &text, QWidget *parentWidget)
 void GuiUtil::setClipboardText(const QString &text)
 {
     QApplication::clipboard()->setText(text);
+}
+
+void GuiUtil::fitWindowToAvailableScreen(QWidget *window, const QSize &preferredSize)
+{
+    if (!window) {
+        return;
+    }
+
+    QScreen *screen = window->parentWidget() ? window->parentWidget()->screen()
+                                             : window->screen();
+    if (!screen) {
+        screen = QGuiApplication::primaryScreen();
+    }
+    if (!screen) {
+        return;
+    }
+
+    const QRect available = screen->availableGeometry();
+    const QSize maxSize(qMax(1, available.width() - 48),
+                        qMax(1, available.height() - 48));
+    window->resize(preferredSize.boundedTo(maxSize));
+    const QSize size = window->size();
+
+    const QWidget *parent = window->parentWidget();
+    const QPoint center = parent ? parent->frameGeometry().center()
+                                 : available.center();
+    const int maxX = qMax(available.left(),
+                          available.right() - size.width() + 1);
+    const int maxY = qMax(available.top(),
+                          available.bottom() - size.height() + 1);
+    const QPoint topLeft(
+        qBound(available.left(), center.x() - size.width() / 2, maxX),
+        qBound(available.top(), center.y() - size.height() / 2, maxY));
+    window->move(topLeft);
 }
 
 static QStringList BrowseForFileInternal(QString context, QString caption, QString filter, QString defaultPath, QWidget *parentWidget, bool single)

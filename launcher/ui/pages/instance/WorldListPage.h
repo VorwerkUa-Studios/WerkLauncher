@@ -15,7 +15,9 @@
 
 #pragma once
 
-#include <QMainWindow>
+#include <QVariantList>
+#include <QVariantMap>
+#include <QWidget>
 
 #include "minecraft/MinecraftInstance.h"
 #include "ui/pages/BasePage.h"
@@ -23,80 +25,80 @@
 #include <LoggedProcess.h>
 
 class WorldList;
-namespace Ui
-{
-class WorldListPage;
-}
 
-class WorldListPage : public QMainWindow, public BasePage
+class WorldListPage : public QWidget, public BasePage
 {
     Q_OBJECT
+    Q_PROPERTY(QString pageTitle READ displayName CONSTANT)
+    Q_PROPERTY(QVariantList worlds READ worlds NOTIFY worldsChanged)
+    Q_PROPERTY(QVariantMap selectedWorld READ selectedWorld NOTIFY selectedWorldChanged)
+    Q_PROPERTY(QVariantMap actionStates READ actionStates NOTIFY actionStatesChanged)
+    Q_PROPERTY(QString filterText READ filterText WRITE setFilterText NOTIFY worldsChanged)
+    Q_PROPERTY(QString sortMode READ sortMode WRITE setSortMode NOTIFY worldsChanged)
+    Q_PROPERTY(bool sortDescending READ sortDescending WRITE setSortDescending NOTIFY worldsChanged)
 
 public:
-    explicit WorldListPage(
-        InstancePtr inst,
-        std::shared_ptr<WorldList> worlds,
-        QWidget *parent = 0
-    );
-    virtual ~WorldListPage();
+    explicit WorldListPage(InstancePtr inst, std::shared_ptr<WorldList> worlds,
+                           QWidget *parent = nullptr);
+    ~WorldListPage() override;
 
-    virtual QString displayName() const override
-    {
-        return tr("Worlds");
-    }
-    virtual QIcon icon() const override
-    {
-        return APPLICATION->getThemedIcon("worlds");
-    }
-    virtual QString id() const override
-    {
-        return "worlds";
-    }
-    virtual QString helpPage() const override
-    {
-        return "Worlds";
-    }
-    virtual bool shouldDisplay() const override;
+    QString displayName() const override { return tr("Worlds"); }
+    QIcon icon() const override { return APPLICATION->getThemedIcon("worlds"); }
+    QString id() const override { return QStringLiteral("worlds"); }
+    QString helpPage() const override { return QStringLiteral("Worlds"); }
+    bool shouldDisplay() const override;
+    void openedImpl() override;
+    void closedImpl() override;
 
-    virtual void openedImpl() override;
-    virtual void closedImpl() override;
+    QVariantList worlds() const;
+    QVariantMap selectedWorld() const;
+    QVariantMap actionStates() const;
+    QString filterText() const { return m_filterText; }
+    void setFilterText(const QString &text);
+    QString sortMode() const { return m_sortMode; }
+    void setSortMode(const QString &mode);
+    bool sortDescending() const { return m_sortDescending; }
+    void setSortDescending(bool descending);
 
-protected:
-    bool eventFilter(QObject *obj, QEvent *ev) override;
-    bool worldListFilter(QKeyEvent *ev);
-    QMenu * createPopupMenu() override;
+    Q_INVOKABLE void selectWorld(const QString &folderName);
+    Q_INVOKABLE void triggerAction(const QString &actionName);
+
+signals:
+    void worldsChanged();
+    void selectedWorldChanged();
+    void actionStatesChanged();
+
+private:
+    QVariantMap worldData(int row) const;
+    int findWorldRow(const QString &folderName) const;
+    void refreshWorlds();
+    bool quickPlaySupported() const;
+    bool worldSafetyNagQuestion();
+    void mceditError();
+    void joinSelectedWorld(bool online);
+    void addWorld();
+    void copySeed();
+    void copyWorld();
+    void renameWorld();
+    void removeWorld();
+    void openDatapacks();
+    void resetWorldIcon();
+    void openMcedit();
+    void refreshWorldList();
+    void openWorldFolder();
+
+private slots:
+    void mceditState(LoggedProcess::State state);
 
 protected:
     InstancePtr m_inst;
 
 private:
-    QModelIndex getSelectedWorld();
-    bool isWorldSafe(QModelIndex index);
-    bool worldSafetyNagQuestion();
-    void mceditError();
-    void joinSelectedWorld(bool online);
-
-private:
-    Ui::WorldListPage *ui;
     std::shared_ptr<WorldList> m_worlds;
     unique_qobject_ptr<LoggedProcess> m_mceditProcess;
+    QString m_selectedWorldFolder;
+    QString m_filterText;
+    QString m_sortMode = QStringLiteral("name");
+    bool m_sortDescending = false;
     bool m_mceditStarting = false;
-
-private slots:
-    void on_actionCopy_Seed_triggered();
-    void on_actionMCEdit_triggered();
-    void on_actionRemove_triggered();
-    void on_actionAdd_triggered();
-    void on_actionCopy_triggered();
-    void on_actionRename_triggered();
-    void on_actionRefresh_triggered();
-    void on_actionView_Folder_triggered();
-    void on_actionDatapacks_triggered();
-    void on_actionReset_Icon_triggered();
-    void on_actionJoin_triggered();
-    void on_actionJoinOffline_triggered();
-    void worldChanged(const QModelIndex &current, const QModelIndex &previous);
-    void mceditState(LoggedProcess::State state);
-
-    void ShowContextMenu(const QPoint &pos);
 };

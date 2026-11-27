@@ -14,12 +14,16 @@
  */
 
 #include "ExportInstanceDialog.h"
+#include "ui/GuiUtil.h"
 #include "ui/widgets/CustomTitleBar.h"
-#include "ui_ExportInstanceDialog.h"
 #include <BaseInstance.h>
 #include <MMCZip.h>
+#include <QDialogButtonBox>
 #include <QFileDialog>
+#include <QHeaderView>
 #include <QMessageBox>
+#include <QTreeView>
+#include <QVBoxLayout>
 #include <qfilesystemmodel.h>
 
 #include "Application.h"
@@ -268,23 +272,45 @@ private:
 
 ExportInstanceDialog::ExportInstanceDialog(InstancePtr instance,
                                            QWidget *parent)
-    : QDialog(parent), ui(new Ui::ExportInstanceDialog), m_instance(instance) {
+    : QDialog(parent), m_instance(instance) {
   setWindowFlags(Qt::FramelessWindowHint | windowFlags());
-  ui->setupUi(this);
+  setWindowTitle(tr("Export Instance"));
+  resize(720, 625);
 
-  auto titleBar = new CustomTitleBar(this);
+  auto *mainLayout = new QVBoxLayout(this);
+  mainLayout->setContentsMargins(0, 0, 0, 0);
+  mainLayout->setSpacing(0);
+
+  auto *titleBar = new CustomTitleBar(this);
   titleBar->setTitle(tr("Export Instance"));
-  ui->verticalLayout->setContentsMargins(0, 0, 0, 0);
-  ui->verticalLayout->setSpacing(0);
-  ui->verticalLayout->insertWidget(0, titleBar);
+  mainLayout->addWidget(titleBar);
+
+  auto *contentWidget = new QWidget(this);
+  auto *contentLayout = new QVBoxLayout(contentWidget);
+  contentLayout->setContentsMargins(16, 16, 16, 16);
+  contentLayout->setSpacing(12);
+
+  m_treeView = new QTreeView(contentWidget);
+  m_treeView->setAlternatingRowColors(true);
+  m_treeView->setSelectionMode(QAbstractItemView::ExtendedSelection);
+  m_treeView->setSortingEnabled(true);
+  contentLayout->addWidget(m_treeView);
+
+  m_buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, contentWidget);
+  connect(m_buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
+  connect(m_buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
+  contentLayout->addWidget(m_buttonBox);
+
+  mainLayout->addWidget(contentWidget);
+
   auto model = new QFileSystemModel(this);
   proxyModel = new PackIgnoreProxy(m_instance, this);
   loadPackIgnore();
   proxyModel->setSourceModel(model);
   auto root = instance->instanceRoot();
-  ui->treeView->setModel(proxyModel);
-  ui->treeView->setRootIndex(proxyModel->mapFromSource(model->index(root)));
-  ui->treeView->sortByColumn(0, Qt::AscendingOrder);
+  m_treeView->setModel(proxyModel);
+  m_treeView->setRootIndex(proxyModel->mapFromSource(model->index(root)));
+  m_treeView->sortByColumn(0, Qt::AscendingOrder);
 
   connect(proxyModel, SIGNAL(rowsInserted(QModelIndex, int, int)),
           SLOT(rowsInserted(QModelIndex, int, int)));
@@ -292,12 +318,14 @@ ExportInstanceDialog::ExportInstanceDialog(InstancePtr instance,
   model->setFilter(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::AllDirs |
                    QDir::Hidden);
   model->setRootPath(root);
-  auto headerView = ui->treeView->header();
+  auto headerView = m_treeView->header();
   headerView->setSectionResizeMode(QHeaderView::ResizeToContents);
   headerView->setSectionResizeMode(0, QHeaderView::Stretch);
+
+  GuiUtil::fitWindowToAvailableScreen(this, size());
 }
 
-ExportInstanceDialog::~ExportInstanceDialog() { delete ui; }
+ExportInstanceDialog::~ExportInstanceDialog() = default;
 
 /// Save icon to instance's folder is needed
 void SaveIcon(InstancePtr m_instance) {
@@ -388,7 +416,7 @@ void ExportInstanceDialog::rowsInserted(QModelIndex parent, int top,
       if (!expNode.isValid()) {
         continue;
       }
-      ui->treeView->expand(node);
+      m_treeView->expand(node);
     }
   }
 }

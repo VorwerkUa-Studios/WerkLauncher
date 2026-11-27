@@ -8,69 +8,38 @@ Item {
     required property var controller
     required property bool bright
     required property string accentColor
+    required property color accentTextColor
     required property int iconVersion
     required property bool selected
 
     signal selectRequested(int instanceIndex, string instanceId)
+    signal contextMenuRequested(real x, real y)
 
-    width: 110
-    height: 120
+    scale: cardHover.hovered ? 1.025 : 1
 
     Rectangle {
         id: card
         anchors.fill: parent
-        anchors.margins: 4
-        radius: 8
+        anchors.margins: 3
+        radius: 14
         color: selected
-               ? Qt.rgba(Qt.color(accentColor).r, Qt.color(accentColor).g, Qt.color(accentColor).b, 0.15)
-               : (cardHover.hovered ? Qt.rgba(bright ? 0 : 1, bright ? 0 : 1, bright ? 0 : 1, bright ? 0.05 : 0.08) : "transparent")
+               ? Qt.tint(bright ? "#ffffff" : "#222222",
+                         Qt.rgba(Qt.color(accentColor).r, Qt.color(accentColor).g,
+                                 Qt.color(accentColor).b, 0.14))
+               : (cardHover.hovered
+                      ? (bright ? "#ffffff" : "#2b2b2b")
+                      : (bright ? "#ffffff" : "#222222"))
         border.color: selected
                       ? accentColor
-                      : (cardHover.hovered ? (bright ? "#d1d1d6" : "#333333") : "transparent")
+                      : (cardHover.hovered ? (bright ? "#c9c9c9" : "#505050")
+                                           : (bright ? "#e5e5e5" : "#3a3a3a"))
         border.width: selected ? 2 : 1
 
-        Behavior on color { ColorAnimation { duration: 100 } }
-        Behavior on border.color { ColorAnimation { duration: 100 } }
+        Behavior on color { ColorAnimation { duration: 120 } }
+        Behavior on border.color { ColorAnimation { duration: 120 } }
 
         HoverHandler {
             id: cardHover
-        }
-
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: 8
-            spacing: 4
-
-            Item {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 48
-                Layout.alignment: Qt.AlignHCenter
-
-                Image {
-                    anchors.centerIn: parent
-                    source: instanceData.iconKey
-                           ? "image://themedicon/" + instanceData.iconKey + "?v=" + iconVersion
-                           : ""
-                    width: 48
-                    height: 48
-                    fillMode: Image.PreserveAspectFit
-                    sourceSize.width: 48
-                    sourceSize.height: 48
-                }
-            }
-
-            Text {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                text: instanceData.display || ""
-                color: bright ? "#1a1a1b" : "#cccccc"
-                font.pixelSize: 11
-                font.family: "Segoe UI"
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.WordWrap
-                maximumLineCount: 2
-                elide: Text.ElideRight
-            }
         }
 
         MouseArea {
@@ -81,91 +50,154 @@ Item {
             onClicked: (mouse) => {
                 selectRequested(instanceData.modelIndex, instanceData.instanceId)
                 if (mouse.button === Qt.RightButton && controller) {
-                    controller.showInstanceContextMenuFromQml()
+                    contextMenuRequested(mouse.x, mouse.y)
                 }
             }
 
             onDoubleClicked: {
                 selectRequested(instanceData.modelIndex, instanceData.instanceId)
-                if (controller) {
-                    controller.on_actionLaunchInstance_triggered()
-                }
+                if (controller) controller.on_actionLaunchInstance_triggered()
             }
         }
 
-        Row {
-            anchors.bottom: parent.bottom
-            anchors.bottomMargin: 6
-            anchors.horizontalCenter: parent.horizontalCenter
-            spacing: 10
-            opacity: cardHover.hovered ? 1 : 0
-            visible: opacity > 0
-            z: 10
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 8
+            spacing: 3
 
-            Behavior on opacity { NumberAnimation { duration: 150 } }
+            Item {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 74
+                Layout.alignment: Qt.AlignHCenter
 
-            Button {
-                id: playButton
-                width: 30
-                height: 30
-                background: Rectangle {
-                    color: playButton.hovered ? accentColor : (bright ? "#ffffff" : Qt.rgba(0, 0, 0, 0.3))
-                    border.color: playButton.hovered ? accentColor : (bright ? "#d1d1d6" : Qt.rgba(1, 1, 1, 0.1))
-                    radius: 15
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: 64
+                    height: 64
+                    radius: 18
+                    color: bright ? "#f2f2f2" : "#2a2a2a"
+                    border.color: bright ? "#e5e5e5" : "#3a3a3a"
+                    border.width: 1
                 }
-                contentItem: Item {
-                    Image {
-                        id: playImage
-                        anchors.centerIn: parent
-                        source: controller ? controller.getThemedIconUrl("status-running") + "?v=" + iconVersion : ""
-                        width: 14
-                        height: 14
-                        visible: false
-                    }
-                    ColorOverlay {
-                        anchors.fill: playImage
-                        source: playImage
-                        color: bright ? (playButton.hovered ? "#fff" : "#555") : (playButton.hovered ? "#fff" : "#ccc")
-                    }
+
+                Image {
+                    id: instanceIcon
+                    anchors.centerIn: parent
+                    source: instanceData.iconKey === "default" || instanceData.iconKey === "logo"
+                            ? "image://themedicon/logo?v=" + iconVersion
+                            : (instanceData.iconKey
+                               ? "image://themedicon/" + instanceData.iconKey + "?v=" + iconVersion
+                               : "")
+                    width: 58
+                    height: 58
+                    fillMode: Image.PreserveAspectFit
+                    sourceSize.width: 58
+                    sourceSize.height: 58
                 }
-                onClicked: {
-                    selectRequested(instanceData.modelIndex, instanceData.instanceId)
-                    if (controller) controller.on_actionLaunchInstance_triggered()
-                }
-                ToolTip.visible: hovered
-                ToolTip.text: qsTranslate("MainWindow", "Launch")
             }
 
-            Button {
-                id: settingsButton
-                width: 30
-                height: 30
-                background: Rectangle {
-                    color: settingsButton.hovered ? accentColor : (bright ? "#ffffff" : Qt.rgba(0, 0, 0, 0.3))
-                    border.color: settingsButton.hovered ? accentColor : (bright ? "#d1d1d6" : Qt.rgba(1, 1, 1, 0.1))
-                    radius: 15
-                }
-                contentItem: Item {
-                    Image {
-                        id: settingsImage
-                        anchors.centerIn: parent
-                        source: controller ? controller.getThemedIconUrl("settings") + "?v=" + iconVersion : ""
-                        width: 16
-                        height: 16
-                        visible: false
+            Text {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 38
+                text: instanceData.display || ""
+                color: bright ? "#202127" : "#e4e6eb"
+                font.pixelSize: 15
+                font.family: "Segoe UI"
+                font.bold: true
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+                wrapMode: Text.WordWrap
+                maximumLineCount: 2
+                elide: Text.ElideRight
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 34
+                Layout.leftMargin: 8
+                Layout.rightMargin: 8
+                opacity: cardHover.hovered || selected ? 1 : 0
+                enabled: cardHover.hovered || selected
+
+                Behavior on opacity { NumberAnimation { duration: 120 } }
+
+                Button {
+                    id: playButton
+                    Layout.alignment: Qt.AlignLeft | Qt.AlignVCenter
+                    Layout.preferredWidth: 30
+                    Layout.preferredHeight: 30
+                    width: 30
+                    height: 30
+                    background: Rectangle {
+                        color: playButton.hovered
+                               ? accentColor
+                               : (bright ? "#f2f2f2" : "#303030")
+                        border.color: playButton.hovered
+                                      ? accentColor
+                                      : (bright ? "#e1e1e1" : "#414141")
+                        radius: 11
                     }
-                    ColorOverlay {
-                        anchors.fill: settingsImage
-                        source: settingsImage
-                        color: bright ? (settingsButton.hovered ? "#fff" : "#555") : (settingsButton.hovered ? "#fff" : "#ccc")
+                    contentItem: Item {
+                        Image {
+                            id: playImage
+                            anchors.centerIn: parent
+                            source: controller ? controller.getThemedIconUrl("status-running") + "?v=" + iconVersion : ""
+                            width: 18
+                            height: 18
+                            visible: false
+                        }
+                        ColorOverlay {
+                            anchors.fill: playImage
+                            source: playImage
+                            color: accentTextColor
+                        }
                     }
+                    onClicked: {
+                        selectRequested(instanceData.modelIndex, instanceData.instanceId)
+                        if (controller) controller.on_actionLaunchInstance_triggered()
+                    }
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTranslate("MainWindow", "Launch")
                 }
-                onClicked: {
-                    selectRequested(instanceData.modelIndex, instanceData.instanceId)
-                    if (controller) controller.on_actionEditInstance_triggered()
+
+                Item {
+                    Layout.fillWidth: true
                 }
-                ToolTip.visible: hovered
-                ToolTip.text: qsTranslate("MainWindow", "Edit Instance")
+
+                Button {
+                    id: settingsButton
+                    Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                    Layout.preferredWidth: 30
+                    Layout.preferredHeight: 30
+                    width: 30
+                    height: 30
+                    background: Rectangle {
+                        color: bright ? "#f2f2f2" : "#303030"
+                        border.color: bright ? "#e1e1e1" : "#414141"
+                        radius: 11
+                    }
+                    contentItem: Item {
+                        Image {
+                            id: settingsImage
+                            anchors.centerIn: parent
+                            source: controller ? controller.getThemedIconUrl("settings") + "?v=" + iconVersion : ""
+                            width: 18
+                            height: 18
+                            visible: false
+                        }
+                        ColorOverlay {
+                            anchors.fill: settingsImage
+                            source: settingsImage
+                            color: bright ? "#555b65" : "#c5cad2"
+                        }
+                    }
+                    onClicked: {
+                        selectRequested(instanceData.modelIndex, instanceData.instanceId)
+                        if (controller) controller.on_actionEditInstance_triggered()
+                    }
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTranslate("MainWindow", "Edit Instance")
+                }
             }
         }
     }

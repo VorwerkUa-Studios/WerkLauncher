@@ -1,34 +1,17 @@
-/* Copyright 2013-2021 MultiMC Contributors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 #pragma once
 
-#include <memory>
+#include <QWidget>
 #include "ui/pages/BasePage.h"
 #include <Application.h>
-#include <QWidget>
-
-class LanguageSelectionWidget;
 
 class LanguagePage : public QWidget, public BasePage
 {
     Q_OBJECT
+    Q_PROPERTY(QString selectedLanguage READ selectedLanguage WRITE setSelectedLanguage NOTIFY selectedLanguageChanged)
 
 public:
-    explicit LanguagePage(QWidget *parent = 0);
-    virtual ~LanguagePage();
+    explicit LanguagePage(QWidget *parent = nullptr);
+    ~LanguagePage() override;
 
     QString displayName() const override
     {
@@ -48,13 +31,16 @@ public:
     }
     bool apply() override;
 
-    void changeEvent(QEvent * ) override;
+    QString selectedLanguage() const { return m_selectedLanguage; }
+    void setSelectedLanguage(const QString &key);
+
+signals:
+    void selectedLanguageChanged();
 
 private:
-    void applySettings();
     void loadSettings();
-    void retranslate();
+    void applySettings();
 
 private:
-    LanguageSelectionWidget *mainWidget;
+    QString m_selectedLanguage;
 };

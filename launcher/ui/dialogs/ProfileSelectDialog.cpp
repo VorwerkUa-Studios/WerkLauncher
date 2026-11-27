@@ -1,112 +1,105 @@
-/* Copyright 2013-2021 MultiMC Contributors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 #include "ProfileSelectDialog.h"
-#include "ui/widgets/CustomTitleBar.h"
-#include "ui_ProfileSelectDialog.h"
 
-#include <QDebug>
-#include <QItemSelectionModel>
+#include <QLabel>
+#include <QQuickWidget>
+#include <QUrl>
+#include <QVBoxLayout>
 
 #include "Application.h"
-
-#include "ui/dialogs/ProgressDialog.h"
+#include "ui/GuiUtil.h"
+#include "ui/widgets/CustomTitleBar.h"
 
 ProfileSelectDialog::ProfileSelectDialog(const QString &message, int flags,
                                          QWidget *parent)
-    : QDialog(parent), ui(new Ui::ProfileSelectDialog) {
+    : QDialog(parent), m_message(message), m_flags(flags) {
   setWindowFlags(Qt::FramelessWindowHint | windowFlags());
-  ui->setupUi(this);
-
-  auto titleBar = new CustomTitleBar(this);
-  titleBar->setTitle(tr("Select Profile"));
-  ui->verticalLayout->setContentsMargins(0, 0, 0, 0);
-  ui->verticalLayout->setSpacing(0);
-  ui->verticalLayout->insertWidget(0, titleBar);
+  setWindowTitle(tr("Select Profile"));
+  resize(440, 380);
 
   m_accounts = APPLICATION->accounts();
-  auto view = ui->listView;
-  // view->setModel(m_accounts.get());
-  // view->hideColumn(AccountList::ActiveColumn);
-  view->setColumnCount(1);
-  view->setRootIsDecorated(false);
-  // FIXME: use a real model, not this
-  if (QTreeWidgetItem *header = view->headerItem()) {
-    header->setText(0, tr("Name"));
-  } else {
-    view->setHeaderLabel(tr("Name"));
-  }
-  QList<QTreeWidgetItem *> items;
   for (int i = 0; i < m_accounts->count(); i++) {
     auto entry = m_accounts->at(i);
-    if (!entry.isAccount) {
-      continue;
+    if (entry.isAccount && entry.account) {
+      m_accountsList.append(entry.account);
     }
-    MinecraftAccountPtr account = entry.account;
-    QString profileLabel;
-    if (account->isInUse()) {
-      profileLabel = tr("%1 (in use)").arg(account->profileName());
-    } else {
-      profileLabel = account->profileName();
-    }
-    auto item = new QTreeWidgetItem(view);
-    item->setText(0, profileLabel);
-    item->setIcon(0, account->getFace());
-    item->setData(0, AccountList::PointerRole, QVariant::fromValue(account));
-    items.append(item);
   }
-  view->addTopLevelItems(items);
 
-  // Set the message label.
-  ui->msgLabel->setVisible(!message.isEmpty());
-  ui->msgLabel->setText(message);
+  auto *mainLayout = new QVBoxLayout(this);
+  mainLayout->setContentsMargins(0, 0, 0, 0);
+  mainLayout->setSpacing(0);
 
-  // Flags...
-  ui->globalDefaultCheck->setVisible(flags & GlobalDefaultCheckbox);
-  ui->instDefaultCheck->setVisible(flags & InstanceDefaultCheckbox);
-  qDebug() << flags;
+  auto *titleBar = new CustomTitleBar(this);
+  titleBar->setTitle(tr("Select Profile"));
+  mainLayout->addWidget(titleBar);
 
-  // Select the first entry in the list.
-  ui->listView->setCurrentIndex(ui->listView->model()->index(0, 0));
+  auto *qmlWidget = new QQuickWidget(this);
+  qmlWidget->setObjectName(QStringLiteral("profileSelectDialogQml"));
+  qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+  qmlWidget->setInitialProperties(
+      {{QStringLiteral("dialogController"),
+        QVariant::fromValue(static_cast<QObject *>(this))}});
 
-  connect(ui->listView, SIGNAL(doubleClicked(QModelIndex)),
-          SLOT(on_buttonBox_accepted()));
+  connect(qmlWidget, &QQuickWidget::statusChanged, this,
+          [qmlWidget](QQuickWidget::Status status) {
+            if (status == QQuickWidget::Error) {
+              for (const auto &err : qmlWidget->errors()) {
+                qCritical() << "ProfileSelectDialog QML error:" << err.toString();
+              }
+            }
+          });
+
+  qmlWidget->setSource(QUrl(QStringLiteral("qrc:/qml/ProfileSelectDialog.qml")));
+  mainLayout->addWidget(qmlWidget);
+
+  GuiUtil::fitWindowToAvailableScreen(this, size());
 }
 
-ProfileSelectDialog::~ProfileSelectDialog() { delete ui; }
+ProfileSelectDialog::~ProfileSelectDialog() = default;
+
+QVariantList ProfileSelectDialog::accountsList() const {
+  QVariantList list;
+  for (const auto &account : m_accountsList) {
+    QVariantMap map;
+    map["name"] = account->profileName();
+    map["inUse"] = account->isInUse();
+    map["type"] = account->typeString();
+    list.append(map);
+  }
+  return list;
+}
+
+void ProfileSelectDialog::setSelectedIndex(int index) {
+  if (m_selectedIndex != index) {
+    m_selectedIndex = index;
+    emit selectedIndexChanged();
+  }
+}
+
+void ProfileSelectDialog::setUseAsGlobalDefault(bool value) {
+  if (m_useAsGlobalDefault != value) {
+    m_useAsGlobalDefault = value;
+    emit useAsGlobalDefaultChanged();
+  }
+}
+
+void ProfileSelectDialog::setUseAsInstDefault(bool value) {
+  if (m_useAsInstDefault != value) {
+    m_useAsInstDefault = value;
+    emit useAsInstDefaultChanged();
+  }
+}
 
 MinecraftAccountPtr ProfileSelectDialog::selectedAccount() const {
   return m_selected;
 }
 
-bool ProfileSelectDialog::useAsGlobalDefault() const {
-  return ui->globalDefaultCheck->isChecked();
-}
-
-bool ProfileSelectDialog::useAsInstDefaullt() const {
-  return ui->instDefaultCheck->isChecked();
-}
-
-void ProfileSelectDialog::on_buttonBox_accepted() {
-  QModelIndexList selection = ui->listView->selectionModel()->selectedIndexes();
-  if (selection.size() > 0) {
-    QModelIndex selected = selection.first();
-    m_selected =
-        selected.data(AccountList::PointerRole).value<MinecraftAccountPtr>();
+void ProfileSelectDialog::acceptDialog() {
+  if (m_selectedIndex >= 0 && m_selectedIndex < m_accountsList.size()) {
+    m_selected = m_accountsList.at(m_selectedIndex);
+    accept();
   }
-  close();
 }
 
-void ProfileSelectDialog::on_buttonBox_rejected() { close(); }
+void ProfileSelectDialog::rejectDialog() {
+  reject();
+}

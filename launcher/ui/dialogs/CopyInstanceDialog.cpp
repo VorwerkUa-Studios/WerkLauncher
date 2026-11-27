@@ -1,122 +1,118 @@
-/* Copyright 2013-2021 MultiMC Contributors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+#include "CopyInstanceDialog.h"
 
-#include <QLayout>
-#include <QPushButton>
+#include <QLabel>
+#include <QQuickWidget>
+#include <QUrl>
+#include <QVBoxLayout>
 
 #include "Application.h"
-#include "CopyInstanceDialog.h"
-#include "ui_CopyInstanceDialog.h"
-
+#include "InstanceList.h"
+#include "icons/IconList.h"
+#include "ui/GuiUtil.h"
 #include "ui/dialogs/IconPickerDialog.h"
 #include "ui/widgets/CustomTitleBar.h"
 
-#include "BaseInstance.h"
-#include "BaseVersion.h"
-#include "InstanceList.h"
-#include "icons/IconList.h"
-#include "tasks/Task.h"
-
 CopyInstanceDialog::CopyInstanceDialog(InstancePtr original, QWidget *parent)
-    : QDialog(parent), ui(new Ui::CopyInstanceDialog), m_original(original) {
-  setWindowFlags(Qt::FramelessWindowHint | windowFlags());
-  ui->setupUi(this);
+    : QDialog(parent), m_original(original) {
+    setWindowFlags(Qt::FramelessWindowHint | windowFlags());
+    setWindowTitle(tr("Copy Instance"));
+    resize(460, 420);
 
-  auto titleBar = new CustomTitleBar(this);
-  titleBar->setTitle(tr("Copy Instance"));
-  ui->verticalLayout->setContentsMargins(0, 0, 0, 0);
-  ui->verticalLayout->setSpacing(0);
-  ui->verticalLayout->insertWidget(0, titleBar);
+    m_iconKey = original->iconKey();
+    m_instName = original->name();
+    m_instGroup = APPLICATION->instances()->getInstanceGroup(m_original->id());
 
-  resize(minimumSizeHint());
+    auto *mainLayout = new QVBoxLayout(this);
+    mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->setSpacing(0);
 
-  InstIconKey = original->iconKey();
-  ui->iconButton->setIcon(APPLICATION->icons()->getIcon(InstIconKey));
-  ui->instNameTextBox->setText(original->name());
-  ui->instNameTextBox->setFocus();
-  auto groupList = APPLICATION->instances()->getGroups();
-  groupList.removeDuplicates();
-  groupList.sort(Qt::CaseInsensitive);
-  groupList.removeOne("");
-  groupList.push_front("");
-  ui->groupBox->addItems(groupList);
-  int index = groupList.indexOf(
-      APPLICATION->instances()->getInstanceGroup(m_original->id()));
-  if (index == -1) {
-    index = 0;
-  }
-  ui->groupBox->setCurrentIndex(index);
-  ui->groupBox->lineEdit()->setPlaceholderText(tr("No group"));
-  ui->copySavesCheckbox->setChecked(m_copySaves);
-  ui->keepPlaytimeCheckbox->setChecked(m_keepPlaytime);
+    auto *titleBar = new CustomTitleBar(this);
+    titleBar->setTitle(tr("Copy Instance"));
+    mainLayout->addWidget(titleBar);
+
+    auto *qmlWidget = new QQuickWidget(this);
+    qmlWidget->setObjectName(QStringLiteral("copyInstanceDialogQml"));
+    qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+    qmlWidget->setInitialProperties(
+        {{QStringLiteral("dialogController"),
+          QVariant::fromValue(static_cast<QObject *>(this))}});
+
+    connect(qmlWidget, &QQuickWidget::statusChanged, this,
+            [qmlWidget](QQuickWidget::Status status) {
+                if (status == QQuickWidget::Error) {
+                    for (const auto &err : qmlWidget->errors()) {
+                        qCritical() << "CopyInstanceDialog QML error:" << err.toString();
+                    }
+                }
+            });
+
+    qmlWidget->setSource(QUrl(QStringLiteral("qrc:/qml/CopyInstanceDialog.qml")));
+    mainLayout->addWidget(qmlWidget);
+
+    GuiUtil::fitWindowToAvailableScreen(this, size());
 }
 
-CopyInstanceDialog::~CopyInstanceDialog() { delete ui; }
+CopyInstanceDialog::~CopyInstanceDialog() = default;
 
-void CopyInstanceDialog::updateDialogState() {
-  auto allowOK = !instName().isEmpty();
-  auto OkButton = ui->buttonBox->button(QDialogButtonBox::Ok);
-  if (OkButton->isEnabled() != allowOK) {
-    OkButton->setEnabled(allowOK);
-  }
+QStringList CopyInstanceDialog::availableGroups() const {
+    auto groupList = APPLICATION->instances()->getGroups();
+    groupList.removeDuplicates();
+    groupList.sort(Qt::CaseInsensitive);
+    groupList.removeOne("");
+    groupList.push_front("");
+    return groupList;
 }
 
-QString CopyInstanceDialog::instName() const {
-  auto result = ui->instNameTextBox->text().trimmed();
-  if (result.size()) {
-    return result;
-  }
-  return QString();
+void CopyInstanceDialog::setInstName(const QString &value) {
+    if (m_instName != value) {
+        m_instName = value;
+        emit instNameChanged();
+        emit canAcceptChanged();
+    }
 }
 
-QString CopyInstanceDialog::iconKey() const { return InstIconKey; }
-
-QString CopyInstanceDialog::instGroup() const {
-  return ui->groupBox->currentText();
+void CopyInstanceDialog::setInstGroup(const QString &value) {
+    if (m_instGroup != value) {
+        m_instGroup = value;
+        emit instGroupChanged();
+    }
 }
 
-void CopyInstanceDialog::on_iconButton_clicked() {
-  IconPickerDialog dlg(this);
-  dlg.execWithSelection(InstIconKey);
-
-  if (dlg.result() == QDialog::Accepted) {
-    InstIconKey = dlg.selectedIconKey;
-    ui->iconButton->setIcon(APPLICATION->icons()->getIcon(InstIconKey));
-  }
+void CopyInstanceDialog::setIconKey(const QString &value) {
+    if (m_iconKey != value) {
+        m_iconKey = value;
+        emit iconKeyChanged();
+    }
 }
 
-void CopyInstanceDialog::on_instNameTextBox_textChanged(const QString &arg1) {
-  updateDialogState();
+void CopyInstanceDialog::setShouldCopySaves(bool value) {
+    if (m_copySaves != value) {
+        m_copySaves = value;
+        emit shouldCopySavesChanged();
+    }
 }
 
-bool CopyInstanceDialog::shouldCopySaves() const { return m_copySaves; }
-
-void CopyInstanceDialog::on_copySavesCheckbox_stateChanged(int state) {
-  if (state == Qt::Unchecked) {
-    m_copySaves = false;
-  } else if (state == Qt::Checked) {
-    m_copySaves = true;
-  }
+void CopyInstanceDialog::setShouldKeepPlaytime(bool value) {
+    if (m_keepPlaytime != value) {
+        m_keepPlaytime = value;
+        emit shouldKeepPlaytimeChanged();
+    }
 }
 
-bool CopyInstanceDialog::shouldKeepPlaytime() const { return m_keepPlaytime; }
+void CopyInstanceDialog::pickIcon() {
+    IconPickerDialog dlg(this);
+    dlg.execWithSelection(m_iconKey);
+    if (dlg.result() == QDialog::Accepted) {
+        setIconKey(dlg.selectedIconKey);
+    }
+}
 
-void CopyInstanceDialog::on_keepPlaytimeCheckbox_stateChanged(int state) {
-  if (state == Qt::Unchecked) {
-    m_keepPlaytime = false;
-  } else if (state == Qt::Checked) {
-    m_keepPlaytime = true;
-  }
+void CopyInstanceDialog::acceptDialog() {
+    if (canAccept()) {
+        accept();
+    }
+}
+
+void CopyInstanceDialog::rejectDialog() {
+    reject();
 }

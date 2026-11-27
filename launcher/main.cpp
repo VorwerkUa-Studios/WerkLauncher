@@ -54,6 +54,7 @@ int main(int argc, char *argv[]) {
     Q_INIT_RESOURCE(colored);
     Q_INIT_RESOURCE(white);
     Q_INIT_RESOURCE(builtin);
+    Q_INIT_RESOURCE(qml);
     Q_INIT_RESOURCE(skins);
 
     int ret = app.exec();

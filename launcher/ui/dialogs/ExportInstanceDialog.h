@@ -1,18 +1,3 @@
-/* Copyright 2013-2021 MultiMC Contributors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 #pragma once
 
 #include <QDialog>
@@ -21,12 +6,9 @@
 
 class BaseInstance;
 class PackIgnoreProxy;
+class QTreeView;
+class QDialogButtonBox;
 typedef std::shared_ptr<BaseInstance> InstancePtr;
-
-namespace Ui
-{
-class ExportInstanceDialog;
-}
 
 class ExportInstanceDialog : public QDialog
 {
@@ -45,9 +27,10 @@ private:
     QString ignoreFileName();
 
 private:
-    Ui::ExportInstanceDialog *ui;
+    QTreeView *m_treeView = nullptr;
+    QDialogButtonBox *m_buttonBox = nullptr;
     InstancePtr m_instance;
-    PackIgnoreProxy * proxyModel;
+    PackIgnoreProxy * proxyModel = nullptr;
 
 private slots:
     void rowsInserted(QModelIndex parent, int top, int bottom);

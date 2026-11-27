@@ -15,6 +15,7 @@
 
 #pragma once
 
+#include <QVariant>
 #include <memory>
 #include <QDialog>
 #include "ui/pages/BasePage.h"
@@ -24,18 +25,19 @@
 
 class SettingsObject;
 
-namespace Ui
-{
-class JavaPage;
-}
-
 class JavaPage : public QWidget, public BasePage
 {
     Q_OBJECT
+    Q_PROPERTY(int minMemory READ minMemory WRITE setMinMemory NOTIFY minMemoryChanged)
+    Q_PROPERTY(int maxMemory READ maxMemory WRITE setMaxMemory NOTIFY maxMemoryChanged)
+    Q_PROPERTY(int permGen READ permGen WRITE setPermGen NOTIFY permGenChanged)
+    Q_PROPERTY(int memoryMaximum READ memoryMaximum CONSTANT)
+    Q_PROPERTY(QString javaPath READ javaPath WRITE setJavaPath NOTIFY javaPathChanged)
+    Q_PROPERTY(QString jvmArgs READ jvmArgs WRITE setJvmArgs NOTIFY jvmArgsChanged)
 
 public:
     explicit JavaPage(QWidget *parent = 0);
-    ~JavaPage();
+    ~JavaPage() override;
 
     QString displayName() const override
     {
@@ -55,18 +57,39 @@ public:
     }
     bool apply() override;
 
+    int minMemory() const { return m_minMemory; }
+    void setMinMemory(int value);
+    int maxMemory() const { return m_maxMemory; }
+    void setMaxMemory(int value);
+    int permGen() const { return m_permGen; }
+    void setPermGen(int value);
+    int memoryMaximum() const { return m_memoryMaximum; }
+    QString javaPath() const { return m_javaPath; }
+    void setJavaPath(const QString &path);
+    QString jvmArgs() const { return m_jvmArgs; }
+    void setJvmArgs(const QString &args);
+
+    Q_INVOKABLE void browseJava();
+    Q_INVOKABLE void detectJava();
+    Q_INVOKABLE void testJava();
+
+signals:
+    void minMemoryChanged();
+    void maxMemoryChanged();
+    void permGenChanged();
+    void javaPathChanged();
+    void jvmArgsChanged();
+
 private:
     void applySettings();
     void loadSettings();
 
-private
-slots:
-    void on_javaDetectBtn_clicked();
-    void on_javaTestBtn_clicked();
-    void on_javaBrowseBtn_clicked();
-    void checkerFinished();
-
 private:
-    Ui::JavaPage *ui;
     unique_qobject_ptr<JavaCommon::TestCheck> checker;
+    int m_minMemory = 512;
+    int m_maxMemory = 1024;
+    int m_permGen = 64;
+    int m_memoryMaximum = 65536;
+    QString m_javaPath;
+    QString m_jvmArgs;
 };

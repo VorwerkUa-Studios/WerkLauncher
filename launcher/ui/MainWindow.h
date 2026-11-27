@@ -55,6 +55,7 @@ class MainWindow : public QMainWindow {
   Q_PROPERTY(QString accentColor READ getAccentColor NOTIFY accentColorChanged)
   Q_PROPERTY(QString themeName READ getThemeName NOTIFY accentColorChanged)
   Q_PROPERTY(QString accountIconUrl READ getAccountIconUrl NOTIFY accountIconChanged)
+  Q_PROPERTY(bool canGoBack READ canGoBack NOTIFY navigationChanged)
 
   class Ui;
 
@@ -63,9 +64,13 @@ public:
   ~MainWindow();
 
   Q_INVOKABLE QString getThemedIconUrl(const QString &name) const;
+  Q_INVOKABLE bool hasStatisticsAction() const;
+  Q_INVOKABLE bool hasDiscordAction() const;
+  Q_INVOKABLE QString getAboutMenuLabel() const;
   QString getAccentColor() const;
   QString getThemeName() const;
   QString getAccountIconUrl() const { return m_accountIconUrl; }
+  bool canGoBack() const;
 
   InstanceProxyModel *proxymodel = nullptr;
 
@@ -93,6 +98,7 @@ signals:
   void isShowingSettingsChanged(bool isShowing);
   void accentColorChanged();
   void accountIconChanged();
+  void navigationChanged();
 
 protected:
   QMenu *createPopupMenu() override;
@@ -120,6 +126,8 @@ public slots:
   }
 
   void on_actionViewInstanceFolder_triggered();
+
+  void on_actionViewCentralModsFolder_triggered();
 
   void on_actionConfig_Folder_triggered();
 
@@ -188,12 +196,13 @@ public slots:
   Q_INVOKABLE void searchTextChanged(const QString &text);
   Q_INVOKABLE void sortModeChanged(int index);
   Q_INVOKABLE void setGroupCollapsed(const QString &group, bool collapsed);
-
-  Q_INVOKABLE void showInstanceContextMenu(const QPoint &pos = QPoint());
-  Q_INVOKABLE void showInstanceContextMenuFromQml();
-  Q_INVOKABLE void showEmptySpaceContextMenu();
-  Q_INVOKABLE void showGroupContextMenu(const QString &group);
-  Q_INVOKABLE void showHelpMenu();
+  Q_INVOKABLE QVariantList getAccountMenuItems() const;
+  Q_INVOKABLE bool hasDefaultAccount() const;
+  Q_INVOKABLE void setDefaultAccount(int index);
+  Q_INVOKABLE void addInstanceToGroup(const QString &group);
+  Q_INVOKABLE void createGroupFromQml();
+  Q_INVOKABLE void deleteGroupFromQml(const QString &group);
+  Q_INVOKABLE void exportSelectedInstanceToModrinth();
 
   void updateToolsMenu();
 
@@ -210,6 +219,7 @@ public slots:
 
 public:
   void showInstanceView();
+  Q_INVOKABLE void goBackToInstanceView() { showInstanceView(); }
   void showPage(QWidget *page);
 
   void startTask(Task *task);
@@ -222,11 +232,7 @@ public:
 
   void defaultAccountChanged();
 
-  void changeActiveAccount();
-
   void droppedURLsOnIndex(QList<QUrl> urls, QModelIndex index);
-
-  void repopulateAccountsMenu();
 
   void updateNewsLabel();
 
@@ -242,7 +248,8 @@ public:
 private:
   void retranslateUi();
 
-  void addInstance(QString url = QString());
+  void addInstance(QString url = QString(), QString forcedGroup = QString());
+  void confirmDeleteGroup(const QString &group);
   void activateInstance(InstancePtr instance);
   void setCatBackground(bool enabled);
   void updateInstanceToolIcon(QString new_icon);
@@ -265,8 +272,6 @@ private:
   QToolButton *newsLabel = nullptr;
   QLabel *m_statusLeft = nullptr;
   QLabel *m_statusCenter = nullptr;
-  QMenu *accountMenu = nullptr;
-  QToolButton *accountMenuButton = nullptr;
   KonamiCode *secretEventFilter = nullptr;
 
   CustomTitleBar *m_titleBar = nullptr;

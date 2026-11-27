@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Window
 import QtQuick.Controls
@@ -24,6 +26,7 @@ Rectangle {
     color: isBright ? "#f5f5f7" : "#1a1a1b"
 
     property string accentColor: launcherController ? launcherController.accentColor : "#4CAF50"
+    property color accentForeground: contrastForeground(accentColor)
     
     // Custom background wallpaper support
     Image {
@@ -36,6 +39,31 @@ Rectangle {
     property int selectedInstanceIndex: -1
     property var instanceGroups: []
     property bool initializingSortMode: true
+    property int instanceCardWidth: Math.max(128, Math.min(176, (width - 64) / 5))
+    property int instanceCardHeight: instanceCardWidth
+
+    function contrastForeground(colorValue) {
+        const color = Qt.color(colorValue)
+        function linear(channel) {
+            return channel <= 0.04045
+                    ? channel / 12.92
+                    : Math.pow((channel + 0.055) / 1.055, 2.4)
+        }
+        const luminance = 0.2126 * linear(color.r)
+                        + 0.7152 * linear(color.g)
+                        + 0.0722 * linear(color.b)
+        const whiteContrast = 1.05 / (luminance + 0.05)
+        const blackContrast = (luminance + 0.05) / 0.05
+        return whiteContrast >= blackContrast ? "#ffffff" : "#000000"
+    }
+
+    function openMenuAt(menu, x, y) {
+        const menuWidth = menu.implicitWidth > 0 ? menu.implicitWidth : menu.width
+        const menuHeight = menu.implicitHeight > 0 ? menu.implicitHeight : menu.height
+        menu.x = Math.max(0, Math.min(x, width - menuWidth))
+        menu.y = Math.max(0, Math.min(y, height - menuHeight))
+        menu.open()
+    }
 
     function selectInstance(index, instId) {
         mainWindow.selectedInstanceIndex = index
@@ -76,74 +104,6 @@ Rectangle {
             Layout.fillHeight: true
             spacing: 0
 
-            // --- LEFT SIDEBAR (Main Toolbar, matches original LeftToolBarArea) ---
-            Rectangle {
-                Layout.fillHeight: true
-                Layout.preferredWidth: 54
-                color: isBright ? "#ffffff" : "transparent" // Solid white on bright
-
-                // Right border for the sidebar
-                Rectangle {
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    anchors.bottom: parent.bottom
-                    width: 1
-                    color: isBright ? "#e5e5ea" : Qt.rgba(1, 1, 1, 0.06) 
-                }
-
-                ColumnLayout {
-                    anchors.fill: parent
-                    anchors.topMargin: 12
-                    anchors.bottomMargin: 6
-                    spacing: 16
-
-                    // Spacer to align with search bar (34px in original)
-                    Item { Layout.preferredHeight: 34 }
-
-                    // Add Instance
-                    ToolbarButton {
-                        iconSource: launcherController ? launcherController.getThemedIconUrl("new") : ""
-                        tooltip: qsTranslate("MainWindow", "Add Instance")
-                        onClicked: launcherController.on_actionAddInstance_triggered()
-                    }
-
-                    // Folders
-                    ToolbarButton {
-                        iconSource: launcherController ? launcherController.getThemedIconUrl("viewfolder") : ""
-                        tooltip: qsTranslate("MainWindow", "Folders")
-                        onClicked: launcherController.on_actionViewInstanceFolder_triggered()
-                    }
-
-                    // Settings
-                    ToolbarButton {
-                        iconSource: launcherController ? launcherController.getThemedIconUrl("settings") : ""
-                        tooltip: qsTranslate("MainWindow", "Settings")
-                        onClicked: launcherController.on_actionSettings_triggered()
-                    }
-
-                    // Help (with submenu)
-                    ToolbarButton {
-                        id: helpButton
-                        iconSource: launcherController ? launcherController.getThemedIconUrl("help") : ""
-                        tooltip: qsTranslate("MainWindow", "Help")
-                        onClicked: launcherController.showHelpMenu()
-                    }
-
-                    // Spacer
-                    Item { Layout.fillHeight: true }
-
-                    // Accounts (bottom)
-                    ToolbarButton {
-                        iconSource: launcherController ? (launcherController.accountIconUrl !== "" ? launcherController.accountIconUrl : launcherController.getThemedIconUrl("accounts")) : ""
-                        tooltip: qsTranslate("MainWindow", "Manage Accounts")
-                        iconSize: 28
-                        onClicked: launcherController.on_actionManageAccounts_triggered()
-                    }
-
-                    Item { Layout.preferredHeight: 8 }
-                }
-            } // End of Left Sidebar
-
             // --- MAIN VIEW ---
             ColumnLayout {
                 Layout.fillWidth: true
@@ -153,7 +113,7 @@ Rectangle {
                 // Top Toolbar (Search + Sort)
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 48
+                    Layout.preferredHeight: mainWindow.width < 820 ? 44 : 50
                     color: "transparent"
 
                     // Subtle bottom border
@@ -212,7 +172,7 @@ Rectangle {
                         // Sort ComboBox
                         ComboBox {
                             id: sortCombo
-                            Layout.preferredWidth: 140
+                            Layout.preferredWidth: mainWindow.width < 820 ? 112 : 148
                             Layout.preferredHeight: 32
                             model: [qsTranslate("MainWindow", "Sort by Name"), qsTranslate("MainWindow", "Sort by Last Played"), qsTranslate("MainWindow", "Sort by Version")]
                             currentIndex: 0
@@ -233,19 +193,25 @@ Rectangle {
                             }
                             
                             delegate: ItemDelegate {
+                                id: sortItem
+                                required property string modelData
                                 width: sortCombo.width
+                                implicitHeight: 36
                                 contentItem: Text {
-                                    text: modelData
-                                    color: isBright ? (highlighted ? "#ffffff" : "#1a1a1b") : (highlighted ? "#000000" : "#ffffff")
+                                    text: sortItem.modelData
+                                    color: sortItem.highlighted
+                                           ? mainWindow.accentForeground
+                                           : (mainWindow.isBright ? "#202127" : "#f0f1f3")
                                     font.pixelSize: 12
                                     font.family: "Segoe UI"
                                 }
                                 background: Rectangle {
-                                    color: highlighted ? mainWindow.accentColor : "transparent"
+                                    color: sortItem.highlighted ? mainWindow.accentColor : "transparent"
                                 }
                             }
 
                             popup: Popup {
+                                popupType: Popup.Item
                                 y: sortCombo.height - 1
                                 width: sortCombo.width
                                 implicitHeight: contentItem.implicitHeight
@@ -281,21 +247,10 @@ Rectangle {
                     Layout.fillHeight: true
                     color: "transparent"
 
-                    // Background MouseArea for empty space right-clicks
-                    MouseArea {
-                        anchors.fill: parent
-                        acceptedButtons: Qt.RightButton
-                        onClicked: (mouse) => {
-                            if (mouse.button === Qt.RightButton) {
-                                if (launcherController) launcherController.showEmptySpaceContextMenu()
-                            }
-                        }
-                    }
-
                     Flickable {
                         id: instanceGroupsView
                         anchors.fill: parent
-                        anchors.margins: 16
+                        anchors.margins: Math.max(8, Math.min(18, mainWindow.width / 80))
                         clip: true
                         contentWidth: width
                         contentHeight: groupsColumn.implicitHeight
@@ -304,10 +259,27 @@ Rectangle {
                             policy: ScrollBar.AsNeeded
                         }
 
+                        TapHandler {
+                            acceptedButtons: Qt.LeftButton
+                            onTapped: searchInput.focus = false
+                        }
+
+                        MouseArea {
+                            width: instanceGroupsView.width
+                            height: Math.max(instanceGroupsView.height,
+                                             instanceGroupsView.contentHeight)
+                            acceptedButtons: Qt.RightButton
+                            preventStealing: false
+                            onClicked: (mouse) => {
+                                const position = mapToItem(mainWindow, mouse.x, mouse.y)
+                                mainWindow.openMenuAt(emptySpaceMenu, position.x, position.y)
+                            }
+                        }
+
                         Column {
                             id: groupsColumn
                             width: instanceGroupsView.width
-                            spacing: 16
+                            spacing: 18
 
                             Repeater {
                                 id: groupRepeater
@@ -318,7 +290,7 @@ Rectangle {
                                     required property var modelData
                                     property bool collapsed: modelData.collapsed
                                     width: groupsColumn.width
-                                    spacing: 4
+                                    spacing: 8
 
                                     Row {
                                         spacing: 6
@@ -333,7 +305,7 @@ Rectangle {
                                         Text {
                                             text: modelData.label
                                             color: isBright ? "#8e8e93" : "#999999"
-                                            font.pixelSize: 14
+                                            font.pixelSize: 15
                                             font.family: "Segoe UI"
                                             font.bold: true
                                         }
@@ -343,9 +315,9 @@ Rectangle {
                                             acceptedButtons: Qt.LeftButton | Qt.RightButton
                                             onClicked: (mouse) => {
                                                 if (mouse.button === Qt.RightButton) {
-                                                    if (launcherController) {
-                                                        launcherController.showGroupContextMenu(modelData.name)
-                                                    }
+                                                    const position = mapToItem(mainWindow, mouse.x, mouse.y)
+                                                    groupContextMenu.groupName = modelData.name
+                                                    mainWindow.openMenuAt(groupContextMenu, position.x, position.y)
                                                 } else if (modelData.name !== "") {
                                                     groupSection.collapsed = !groupSection.collapsed
                                                     if (launcherController) {
@@ -358,22 +330,31 @@ Rectangle {
 
                                     Flow {
                                         width: parent.width
-                                        spacing: 0
-                                        implicitHeight: childrenRect.height
+                                        spacing: 8
+                                        height: childrenRect.height
                                         visible: !groupSection.collapsed
 
                                         Repeater {
                                             model: modelData.instances
 
                                             delegate: InstanceCard {
+                                                id: instanceCard
                                                 required property var modelData
+                                                width: mainWindow.instanceCardWidth
+                                                height: mainWindow.instanceCardHeight
                                                 instanceData: modelData
                                                 controller: launcherController
                                                 bright: mainWindow.isBright
                                                 accentColor: mainWindow.accentColor
+                                                accentTextColor: mainWindow.accentForeground
                                                 iconVersion: mainWindow.iconVersion
                                                 selected: instanceData.modelIndex === mainWindow.selectedInstanceIndex
                                                 onSelectRequested: (instanceIndex, instanceId) => mainWindow.selectInstance(instanceIndex, instanceId)
+                                                onContextMenuRequested: (x, y) => {
+                                                    const position = instanceCard.mapToItem(mainWindow, x, y)
+                                                    instanceContextMenu.instanceName = instanceData.display
+                                                    mainWindow.openMenuAt(instanceContextMenu, position.x, position.y)
+                                                }
                                             }
                                         }
                                     }
@@ -433,93 +414,140 @@ Rectangle {
         }
     }
 
-    // Component for styled menus
-    component StyledMenu : Menu {
-        background: Rectangle {
-            color: isBright ? "#ffffff" : "#252526"
-            border.color: isBright ? "#e5e5ea" : "#2a2a2b"
-            radius: 8
+    StyledMenu {
+        id: emptySpaceMenu
+        width: 230
+
+        StyledMenuItem {
+            text: qsTranslate("MainWindow", "Create instance")
+            onTriggered: launcherController.on_actionAddInstance_triggered()
         }
-        
-        delegate: MenuItem {
-            id: menuItem
-            contentItem: Text {
-                text: menuItem.text
-                color: isBright ? (menuItem.highlighted ? "#ffffff" : "#1a1a1b") : (menuItem.highlighted ? "#000000" : "#ffffff")
-                font.pixelSize: 13
-                font.family: "Segoe UI"
-            }
-            background: Rectangle {
-                color: menuItem.highlighted ? mainWindow.accentColor : "transparent"
-                radius: 4
-            }
+        StyledMenuItem {
+            text: qsTranslate("MainWindow", "Create group")
+            onTriggered: launcherController.createGroupFromQml()
         }
     }
 
-    // Help Menu Top-Level (Native C++ menu used instead)
+    StyledMenu {
+        id: groupContextMenu
+        property string groupName: ""
+        width: 250
 
-    // Reusable Sidebar Toolbar Button
-    component ToolbarButton: Item {
-        id: control
-        Layout.preferredWidth: 40
-        Layout.preferredHeight: 40
-        Layout.alignment: Qt.AlignHCenter
-        property string iconSource: ""
-        property string tooltip: ""
-        property int iconSize: 24
-
-        signal clicked()
-
-        Rectangle {
-            anchors.fill: parent
-            radius: 6
-            color: btnMouseArea.containsMouse ? (isBright ? "#f2f2f7" : "#333333") : (isBright ? "#ffffff" : "#252526")
-            border.color: btnMouseArea.containsMouse ? mainWindow.accentColor : (isBright ? "#d1d1d6" : "#333333")
-            border.width: 1
-
-            Behavior on color {
-                ColorAnimation { duration: 100 }
-            }
-            
-            Behavior on border.color {
-                ColorAnimation { duration: 100 }
-            }
-
-            Image {
-                anchors.centerIn: parent
-                source: control.iconSource + "?v=" + iconVersion
-                width: control.iconSize
-                height: control.iconSize
-                fillMode: Image.PreserveAspectFit
-                opacity: 1.0
-            }
+        StyledMenuItem {
+            text: qsTranslate("MainWindow", "Create instance")
+            onTriggered: launcherController.addInstanceToGroup(groupContextMenu.groupName)
         }
+        StyledMenuItem {
+            text: qsTranslate("MainWindow", "Delete group '%1'").arg(groupContextMenu.groupName)
+            onTriggered: launcherController.deleteGroupFromQml(groupContextMenu.groupName)
+        }
+    }
 
-        ToolTip {
-            id: btnTooltip
-            text: control.tooltip
-            visible: btnMouseArea.containsMouse && control.tooltip !== ""
-            delay: 500
-            
-            contentItem: Text {
-                text: btnTooltip.text
-                color: "#000000" // Tooltips in this app are always black text on accent bg
-                font.pixelSize: 12
-                font.family: "Segoe UI"
-            }
-            
+    StyledMenu {
+        id: instanceContextMenu
+        property string instanceName: ""
+        width: 250
+
+        StyledMenuItem {
+            text: instanceContextMenu.instanceName
+            enabled: false
+        }
+        MenuSeparator { }
+        StyledMenuItem {
+            text: qsTranslate("MainWindow", "Change Icon")
+            onTriggered: launcherController.on_actionChangeInstIcon_triggered()
+        }
+        StyledMenuItem {
+            text: qsTranslate("MainWindow", "Change Group")
+            onTriggered: launcherController.on_actionChangeInstGroup_triggered()
+        }
+        MenuSeparator { }
+        StyledMenuItem {
+            text: qsTranslate("MainWindow", "Edit Instance")
+            onTriggered: launcherController.on_actionEditInstance_triggered()
+        }
+        StyledMenuItem {
+            text: qsTranslate("MainWindow", "Minecraft Folder")
+            onTriggered: launcherController.on_actionViewSelectedMCFolder_triggered()
+        }
+        StyledMenuItem {
+            text: qsTranslate("MainWindow", "Config Folder")
+            onTriggered: launcherController.on_actionConfig_Folder_triggered()
+        }
+        MenuSeparator { }
+        StyledMenuItem {
+            text: qsTranslate("MainWindow", "Create Shortcut")
+            onTriggered: launcherController.on_actionCreateShortcut_triggered()
+        }
+        Menu {
+            title: qsTranslate("MainWindow", "Export")
+            popupType: Popup.Item
+            delegate: StyledMenuItem { }
             background: Rectangle {
-                color: mainWindow.accentColor
-                radius: 4
+                color: mainWindow.isBright ? "#ffffff" : "#252526"
+                border.color: mainWindow.isBright ? "#e5e7eb" : "#3a3a3b"
+                radius: 8
+            }
+            StyledMenuItem {
+                text: qsTranslate("MainWindow", "Export instance...")
+                onTriggered: launcherController.on_actionExportInstance_triggered()
+            }
+            StyledMenuItem {
+                text: qsTranslate("MainWindow", "Modrinth (WIP)")
+                onTriggered: launcherController.exportSelectedInstanceToModrinth()
             }
         }
+        StyledMenuItem {
+            text: qsTranslate("MainWindow", "Delete")
+            onTriggered: launcherController.on_actionDeleteInstance_triggered()
+        }
+        StyledMenuItem {
+            text: qsTranslate("MainWindow", "Copy Instance")
+            onTriggered: launcherController.on_actionCopyInstance_triggered()
+        }
+    }
 
-        MouseArea {
-            id: btnMouseArea
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: parent.clicked()
+    component StyledMenuItem: MenuItem {
+        id: styledMenuItem
+        implicitHeight: 38
+        contentItem: RowLayout {
+            spacing: 8
+            Image {
+                Layout.preferredWidth: styledMenuItem.icon.source.toString() === "" ? 0 : 20
+                Layout.preferredHeight: 20
+                source: styledMenuItem.icon.source
+                fillMode: Image.PreserveAspectFit
+                visible: source.toString() !== ""
+            }
+            Text {
+                Layout.fillWidth: true
+                text: styledMenuItem.text
+                color: !styledMenuItem.enabled
+                       ? (mainWindow.isBright ? "#8e929a" : "#858991")
+                       : (styledMenuItem.highlighted
+                              ? mainWindow.accentForeground
+                              : (mainWindow.isBright ? "#202127" : "#f0f1f3"))
+                font.pixelSize: 13
+                font.family: "Segoe UI"
+                elide: Text.ElideRight
+            }
+        }
+        background: Rectangle {
+            color: styledMenuItem.highlighted
+                   ? mainWindow.accentColor
+                   : "transparent"
+            radius: 5
+        }
+    }
+
+    component StyledMenu: Menu {
+        parent: mainWindow
+        popupType: Popup.Item
+        delegate: StyledMenuItem { }
+        background: Rectangle {
+            color: mainWindow.isBright ? "#ffffff" : "#252526"
+            border.color: mainWindow.isBright ? "#e5e5ea" : "#3a3a3b"
+            radius: 8
         }
     }
 

@@ -13,83 +13,33 @@
  * limitations under the License.
  */
 
-#include "Application.h"
-
-#include <QMessageBox>
-#include <QLabel>
-#include <QEvent>
-#include <QKeyEvent>
-#include <QMenu>
-#include <QAbstractItemModel>
-#include <QMessageBox>
-#include <QListView>
-#include <QString>
-#include <QUrl>
-
 #include "VersionPage.h"
-#include "ui_VersionPage.h"
 
+#include <QFileInfo>
+#include <QHash>
+#include <QLabel>
+#include <QMessageBox>
+#include <QQmlError>
+#include <QQuickWidget>
+#include <QStackedLayout>
+#include <QUrl>
+#include <QVariant>
+
+#include "Application.h"
 #include "ui/dialogs/CustomMessageBox.h"
 #include "ui/dialogs/VersionSelectDialog.h"
 #include "ui/dialogs/NewComponentDialog.h"
 #include "ui/dialogs/ProgressDialog.h"
-
 #include "ui/GuiUtil.h"
-
 #include "minecraft/PackProfile.h"
 #include "minecraft/auth/AccountList.h"
-#include "minecraft/mod/Mod.h"
 #include "minecraft/VersionFilterData.h"
 #include "icons/IconList.h"
 #include "Exception.h"
 #include "Version.h"
 #include "DesktopServices.h"
-
 #include "meta/Index.h"
 #include "meta/VersionList.h"
-
-class IconProxy : public QIdentityProxyModel
-{
-    Q_OBJECT
-public:
-
-    IconProxy(QWidget *parentWidget) : QIdentityProxyModel(parentWidget)
-    {
-        connect(parentWidget, &QObject::destroyed, this, &IconProxy::widgetGone);
-        m_parentWidget = parentWidget;
-    }
-
-    virtual QVariant data(const QModelIndex &proxyIndex, int role = Qt::DisplayRole) const override
-    {
-        QVariant var = QIdentityProxyModel::data(proxyIndex, role);
-        int column = proxyIndex.column();
-        if(column == 0 && role == Qt::DecorationRole && m_parentWidget)
-        {
-            if(!var.isNull())
-            {
-                auto string = var.toString();
-                if(string == "warning")
-                {
-                    return APPLICATION->getThemedIcon("status-yellow");
-                }
-                else if(string == "error")
-                {
-                    return APPLICATION->getThemedIcon("status-bad");
-                }
-            }
-            return APPLICATION->getThemedIcon("status-good");
-        }
-        return var;
-    }
-private slots:
-    void widgetGone()
-    {
-        m_parentWidget = nullptr;
-    }
-
-private:
-    QWidget *m_parentWidget = nullptr;
-};
 
 QIcon VersionPage::icon() const
 {
@@ -100,104 +50,286 @@ bool VersionPage::shouldDisplay() const
     return true;
 }
 
-QMenu * VersionPage::createPopupMenu()
-{
-    QMenu* filteredMenu = QMainWindow::createPopupMenu();
-    filteredMenu->removeAction( ui->toolBar->toggleViewAction() );
-    return filteredMenu;
-}
-
 VersionPage::VersionPage(MinecraftInstance *inst, QWidget *parent)
-    : QMainWindow(parent), ui(new Ui::VersionPage), m_inst(inst)
+   : QWidget(parent), m_inst(inst)
 {
-    ui->setupUi(this);
-
-    ui->toolBar->insertSpacer(ui->actionReload);
-
     m_profile = m_inst->getPackProfile();
-
     reloadPackProfile();
 
-    auto proxy = new IconProxy(ui->packageView);
-    proxy->setSourceModel(m_profile.get());
-
-    m_filterModel = new QSortFilterProxyModel();
-    m_filterModel->setDynamicSortFilter(true);
-    m_filterModel->setFilterCaseSensitivity(Qt::CaseInsensitive);
-    m_filterModel->setSortCaseSensitivity(Qt::CaseInsensitive);
-    m_filterModel->setSourceModel(proxy);
-    m_filterModel->setFilterKeyColumn(-1);
-
-    ui->packageView->setModel(m_filterModel);
-    ui->packageView->installEventFilter(this);
-    ui->packageView->setSelectionMode(QAbstractItemView::SingleSelection);
-    ui->packageView->setContextMenuPolicy(Qt::CustomContextMenu);
-
-    connect(ui->packageView->selectionModel(), &QItemSelectionModel::currentChanged, this, &VersionPage::versionCurrent);
-    auto smodel = ui->packageView->selectionModel();
-    connect(smodel, &QItemSelectionModel::currentChanged, this, &VersionPage::packageCurrent);
-
+    auto publishProfileChange = [this]() {
+       if (currentIdx >= m_profile->rowCount()) {
+           currentIdx = m_profile->rowCount() - 1;
+       }
+        emit componentsChanged();
+        emit selectionChanged();
+        updateButtons();
+    };
+    connect(m_profile.get(), &QAbstractItemModel::rowsInserted, this,
+            [publishProfileChange]() { publishProfileChange(); });
+    connect(m_profile.get(), &QAbstractItemModel::rowsRemoved, this,
+            [publishProfileChange]() { publishProfileChange(); });
+    connect(m_profile.get(), &QAbstractItemModel::rowsMoved, this,
+            [publishProfileChange]() { publishProfileChange(); });
+    connect(m_profile.get(), &QAbstractItemModel::dataChanged, this,
+            [publishProfileChange]() { publishProfileChange(); });
+    connect(m_profile.get(), &QAbstractItemModel::modelReset, this,
+            [publishProfileChange]() { publishProfileChange(); });
+    connect(m_profile.get(), &QAbstractItemModel::layoutChanged, this,
+            [publishProfileChange]() { publishProfileChange(); });
     connect(m_profile.get(), &PackProfile::minecraftChanged, this, &VersionPage::updateVersionControls);
+
     controlsEnabled = !m_inst->isRunning();
     updateVersionControls();
     preselect(0);
     connect(m_inst, &BaseInstance::runningStatusChanged, this, &VersionPage::updateRunningStatus);
-    connect(ui->packageView, &ModListView::customContextMenuRequested, this, &VersionPage::showContextMenu);
-    connect(ui->filterEdit, &QLineEdit::textChanged, this, &VersionPage::onFilterTextChanged);
+
+    auto *qmlWidget = new QQuickWidget(this);
+    qmlWidget->setObjectName(QStringLiteral("versionPageQml"));
+    qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+    qmlWidget->setInitialProperties(
+        {{QStringLiteral("versionController"),
+          QVariant::fromValue(static_cast<QObject *>(this))}});
+
+    auto *stack = new QStackedLayout(this);
+    stack->setContentsMargins(0, 0, 0, 0);
+    stack->addWidget(qmlWidget);
+    stack->setCurrentWidget(qmlWidget);
+
+    auto *errorLabel =
+        new QLabel(tr("The version page could not be loaded."), this);
+    errorLabel->setAlignment(Qt::AlignCenter);
+    errorLabel->setWordWrap(true);
+    stack->addWidget(errorLabel);
+    const auto showLoadError = [qmlWidget, stack, errorLabel]() {
+        QStringList details;
+        for (const auto &error : qmlWidget->errors()) {
+            details.append(error.toString());
+        }
+        if (details.isEmpty()) {
+            details.append(QObject::tr("No QML diagnostic was provided."));
+        }
+        qCritical() << "Version page QML failed to load:"
+                    << details.join('\n');
+        errorLabel->setToolTip(details.join('\n'));
+        stack->setCurrentWidget(errorLabel);
+    };
+    connect(qmlWidget, &QQuickWidget::statusChanged, this,
+            [qmlWidget, showLoadError](QQuickWidget::Status status) {
+                if (status == QQuickWidget::Error ||
+                    (status == QQuickWidget::Ready &&
+                     !qmlWidget->rootObject())) {
+                    showLoadError();
+                }
+            });
+    qmlWidget->setSource(QUrl(QStringLiteral("qrc:/qml/VersionPage.qml")));
+    if (qmlWidget->status() == QQuickWidget::Error ||
+        (qmlWidget->status() == QQuickWidget::Ready &&
+         !qmlWidget->rootObject())) {
+        showLoadError();
+    }
 }
 
-VersionPage::~VersionPage()
+VersionPage::~VersionPage() = default;
+
+QVariantMap VersionPage::componentData(int sourceRow) const
 {
-    delete ui;
+    auto *component = m_profile->getComponent(sourceRow);
+    if (!component) {
+        return {};
+    }
+
+    const auto severity = component->getProblemSeverity();
+    QString severityName;
+    QString summary;
+    if (severity == ProblemSeverity::Warning) {
+        severityName = QStringLiteral("warning");
+        summary = tr("%1 possibly has issues.").arg(component->getName());
+    } else if (severity == ProblemSeverity::Error) {
+        severityName = QStringLiteral("error");
+        summary = tr("%1 has issues!").arg(component->getName());
+    }
+
+    QStringList problems;
+    for (const auto &problem : component->getProblems()) {
+        QString prefix;
+        if (problem.m_severity == ProblemSeverity::Error) {
+            prefix = tr("Error: ");
+        } else if (problem.m_severity == ProblemSeverity::Warning) {
+            prefix = tr("Warning: ");
+        }
+        problems.append(prefix + problem.m_description);
+    }
+
+    QVariantMap result;
+    result.insert(QStringLiteral("sourceRow"), sourceRow);
+    result.insert(QStringLiteral("id"), component->getID());
+    result.insert(QStringLiteral("name"), component->getName());
+    result.insert(QStringLiteral("version"),
+                  component->isCustom()
+                      ? tr("%1 (Custom)").arg(component->getVersion())
+                      : component->getVersion());
+    result.insert(QStringLiteral("enabled"), component->isEnabled());
+    result.insert(QStringLiteral("canBeDisabled"), component->canBeDisabled());
+    result.insert(QStringLiteral("severity"), severityName);
+    result.insert(QStringLiteral("summary"), summary);
+    result.insert(QStringLiteral("problems"), problems.join('\n'));
+    return result;
 }
 
-void VersionPage::showContextMenu(const QPoint& pos)
+QVariantList VersionPage::components() const
 {
-    auto menu = ui->toolBar->createContextMenu(this, tr("Context menu"));
-    menu->exec(ui->packageView->mapToGlobal(pos));
-    delete menu;
+    QVariantList result;
+    if (!m_profile) {
+        return result;
+    }
+
+    const QString filter = m_filterText.trimmed();
+    for (int row = 0; row < m_profile->rowCount(); ++row) {
+        auto item = componentData(row);
+        const QString searchable = item.value(QStringLiteral("name")).toString()
+                                   + QLatin1Char(' ')
+                                   + item.value(QStringLiteral("version")).toString()
+                                   + QLatin1Char(' ')
+                                   + item.value(QStringLiteral("id")).toString();
+        if (!filter.isEmpty() &&
+            !searchable.contains(filter, Qt::CaseInsensitive)) {
+            continue;
+        }
+        result.append(item);
+    }
+    return result;
 }
 
-void VersionPage::packageCurrent(const QModelIndex &current, const QModelIndex &previous)
+QVariantMap VersionPage::selectedComponent() const
 {
-    if (!current.isValid())
-    {
-        ui->frame->clear();
+    return componentData(currentIdx);
+}
+
+QVariantMap VersionPage::actionStates() const
+{
+    auto *component = m_profile->getComponent(currentIdx);
+    const bool selected = component != nullptr;
+    const bool editable = controlsEnabled && selected;
+    QVariantMap result;
+    result.insert(QStringLiteral("changeVersion"),
+                  editable && component->isVersionChangeable());
+    result.insert(QStringLiteral("moveUp"), editable && component->isMoveable());
+    result.insert(QStringLiteral("moveDown"), editable && component->isMoveable());
+    result.insert(QStringLiteral("remove"), editable && component->isRemovable());
+    result.insert(QStringLiteral("customize"), editable && component->isCustomizable());
+    result.insert(QStringLiteral("edit"), editable && component->isCustom());
+    result.insert(QStringLiteral("revert"), editable && component->isRevertible());
+    result.insert(QStringLiteral("installForge"), controlsEnabled);
+    result.insert(QStringLiteral("installNeoForge"),
+                  controlsEnabled && supportsNeoForge);
+    result.insert(QStringLiteral("installFabric"),
+                  controlsEnabled && supportsFabric);
+    result.insert(QStringLiteral("installQuilt"),
+                  controlsEnabled && supportsFabric);
+    result.insert(QStringLiteral("installLiteLoader"),
+                  controlsEnabled && supportsLiteLoader);
+    result.insert(QStringLiteral("installMods"), controlsEnabled);
+    result.insert(QStringLiteral("addJarMods"), controlsEnabled);
+    result.insert(QStringLiteral("replaceMinecraftJar"), controlsEnabled);
+    result.insert(QStringLiteral("addEmpty"), controlsEnabled);
+    result.insert(QStringLiteral("openMinecraftFolder"), true);
+    result.insert(QStringLiteral("openLibrariesFolder"), true);
+    result.insert(QStringLiteral("reload"), controlsEnabled);
+    result.insert(QStringLiteral("downloadAll"), controlsEnabled);
+    return result;
+}
+
+void VersionPage::setFilterText(const QString &text)
+{
+    if (m_filterText == text) {
         return;
     }
-    int row = current.row();
-    auto patch = m_profile->getComponent(row);
-    auto severity = patch->getProblemSeverity();
-    switch(severity)
-    {
-        case ProblemSeverity::Warning:
-            ui->frame->setModText(tr("%1 possibly has issues.").arg(patch->getName()));
-            break;
-        case ProblemSeverity::Error:
-            ui->frame->setModText(tr("%1 has issues!").arg(patch->getName()));
-            break;
-        default:
-        case ProblemSeverity::None:
-            ui->frame->clear();
-            return;
+    m_filterText = text;
+    emit componentsChanged();
+}
+
+void VersionPage::selectComponent(int sourceRow)
+{
+    if (sourceRow < 0 || sourceRow >= m_profile->rowCount()) {
+        qWarning() << "Ignoring invalid component selection" << sourceRow;
+        return;
+    }
+    currentIdx = sourceRow;
+    emit selectionChanged();
+    updateButtons();
+}
+
+void VersionPage::setComponentEnabled(int sourceRow, bool enabled)
+{
+    if (!controlsEnabled) {
+        return;
+    }
+    auto *component = m_profile->getComponent(sourceRow);
+    if (!component) {
+        qWarning() << "Ignoring invalid component enabled-state change"
+                   << sourceRow;
+        return;
+    }
+    if (!component->canBeDisabled()) {
+        return;
+    }
+    component->setEnabled(enabled);
+    emit componentsChanged();
+}
+
+void VersionPage::triggerAction(const QString &actionName)
+{
+    static const QHash<QString, QString> actionAvailability = {
+        {QStringLiteral("actionChange_version"), QStringLiteral("changeVersion")},
+        {QStringLiteral("actionMove_up"), QStringLiteral("moveUp")},
+        {QStringLiteral("actionMove_down"), QStringLiteral("moveDown")},
+        {QStringLiteral("actionRemove"), QStringLiteral("remove")},
+        {QStringLiteral("actionCustomize"), QStringLiteral("customize")},
+        {QStringLiteral("actionEdit"), QStringLiteral("edit")},
+        {QStringLiteral("actionRevert"), QStringLiteral("revert")},
+        {QStringLiteral("actionInstall_Forge"), QStringLiteral("installForge")},
+        {QStringLiteral("actionInstall_NeoForge"), QStringLiteral("installNeoForge")},
+        {QStringLiteral("actionInstall_Fabric"), QStringLiteral("installFabric")},
+        {QStringLiteral("actionInstall_Quilt"), QStringLiteral("installQuilt")},
+        {QStringLiteral("actionInstall_LiteLoader"), QStringLiteral("installLiteLoader")},
+        {QStringLiteral("actionInstall_mods"), QStringLiteral("installMods")},
+        {QStringLiteral("actionAdd_to_Minecraft_jar"), QStringLiteral("addJarMods")},
+        {QStringLiteral("actionReplace_Minecraft_jar"), QStringLiteral("replaceMinecraftJar")},
+        {QStringLiteral("actionAdd_Empty"), QStringLiteral("addEmpty")},
+        {QStringLiteral("actionMinecraftFolder"), QStringLiteral("openMinecraftFolder")},
+        {QStringLiteral("actionLibrariesFolder"), QStringLiteral("openLibrariesFolder")},
+        {QStringLiteral("actionReload"), QStringLiteral("reload")},
+        {QStringLiteral("actionDownload_All"), QStringLiteral("downloadAll")},
+    };
+    const auto availability = actionAvailability.constFind(actionName);
+    if (availability == actionAvailability.constEnd()) {
+        qWarning() << "Ignoring unknown version-page action" << actionName;
+        return;
+    }
+    if (!actionStates().value(*availability).toBool()) {
+        return;
     }
 
-    auto &problems = patch->getProblems();
-    QString problemOut;
-    for (auto &problem: problems)
-    {
-        if(problem.m_severity == ProblemSeverity::Error)
-        {
-            problemOut += tr("Error: ");
-        }
-        else if(problem.m_severity == ProblemSeverity::Warning)
-        {
-            problemOut += tr("Warning: ");
-        }
-        problemOut += problem.m_description;
-        problemOut += "\n";
-    }
-    ui->frame->setModDescription(problemOut);
+    if (actionName == QStringLiteral("actionChange_version")) on_actionChange_version_triggered();
+    else if (actionName == QStringLiteral("actionMove_up")) on_actionMove_up_triggered();
+    else if (actionName == QStringLiteral("actionMove_down")) on_actionMove_down_triggered();
+    else if (actionName == QStringLiteral("actionRemove")) on_actionRemove_triggered();
+    else if (actionName == QStringLiteral("actionCustomize")) on_actionCustomize_triggered();
+    else if (actionName == QStringLiteral("actionEdit")) on_actionEdit_triggered();
+    else if (actionName == QStringLiteral("actionRevert")) on_actionRevert_triggered();
+    else if (actionName == QStringLiteral("actionInstall_Forge")) on_actionInstall_Forge_triggered();
+    else if (actionName == QStringLiteral("actionInstall_NeoForge")) on_actionInstall_NeoForge_triggered();
+    else if (actionName == QStringLiteral("actionInstall_Fabric")) on_actionInstall_Fabric_triggered();
+    else if (actionName == QStringLiteral("actionInstall_Quilt")) on_actionInstall_Quilt_triggered();
+    else if (actionName == QStringLiteral("actionInstall_LiteLoader")) on_actionInstall_LiteLoader_triggered();
+    else if (actionName == QStringLiteral("actionInstall_mods")) on_actionInstall_mods_triggered();
+    else if (actionName == QStringLiteral("actionAdd_to_Minecraft_jar")) on_actionAdd_to_Minecraft_jar_triggered();
+    else if (actionName == QStringLiteral("actionReplace_Minecraft_jar")) on_actionReplace_Minecraft_jar_triggered();
+    else if (actionName == QStringLiteral("actionAdd_Empty")) on_actionAdd_Empty_triggered();
+    else if (actionName == QStringLiteral("actionMinecraftFolder")) on_actionMinecraftFolder_triggered();
+    else if (actionName == QStringLiteral("actionLibrariesFolder")) on_actionLibrariesFolder_triggered();
+    else if (actionName == QStringLiteral("actionReload")) on_actionReload_triggered();
+    else if (actionName == QStringLiteral("actionDownload_All")) on_actionDownload_All_triggered();
 }
 
 void VersionPage::updateRunningStatus(bool running)
@@ -210,9 +342,9 @@ void VersionPage::updateRunningStatus(bool running)
 
 void VersionPage::updateVersionControls()
 {
-    bool supportsFabric = false;
-    bool supportsLiteLoader = false;
-    bool supportsNeoForge = false;
+    supportsFabric = false;
+    supportsLiteLoader = false;
+    supportsNeoForge = false;
 
     auto component = m_profile->getComponent("net.minecraft");
     if(component)
@@ -224,32 +356,12 @@ void VersionPage::updateVersionControls()
         supportsNeoForge = minecraftReleaseDate >= g_VersionFilterData.neoForgeBeginsDate;
     }
 
-    ui->actionInstall_Fabric->setEnabled(controlsEnabled && supportsFabric);
-    ui->actionInstall_Quilt->setEnabled((controlsEnabled) && supportsFabric);
-    ui->actionInstall_LiteLoader->setEnabled(controlsEnabled && supportsLiteLoader);
-    ui->actionInstall_NeoForge->setEnabled(controlsEnabled && supportsNeoForge);
-
     updateButtons();
 }
 
-void VersionPage::updateButtons(int row)
+void VersionPage::updateButtons()
 {
-    if(row == -1)
-        row = currentRow();
-    auto patch = m_profile->getComponent(row);
-    ui->actionRemove->setEnabled(controlsEnabled && patch && patch->isRemovable());
-    ui->actionMove_down->setEnabled(controlsEnabled && patch && patch->isMoveable());
-    ui->actionMove_up->setEnabled(controlsEnabled && patch && patch->isMoveable());
-    ui->actionChange_version->setEnabled(controlsEnabled && patch && patch->isVersionChangeable());
-    ui->actionEdit->setEnabled(controlsEnabled && patch && patch->isCustom());
-    ui->actionCustomize->setEnabled(controlsEnabled && patch && patch->isCustomizable());
-    ui->actionRevert->setEnabled(controlsEnabled && patch && patch->isRevertible());
-    ui->actionDownload_All->setEnabled(controlsEnabled);
-    ui->actionAdd_Empty->setEnabled(controlsEnabled);
-    ui->actionReload->setEnabled(controlsEnabled);
-    ui->actionInstall_mods->setEnabled(controlsEnabled);
-    ui->actionReplace_Minecraft_jar->setEnabled(controlsEnabled);
-    ui->actionAdd_to_Minecraft_jar->setEnabled(controlsEnabled);
+    emit actionStatesChanged();
 }
 
 bool VersionPage::reloadPackProfile()
@@ -278,13 +390,13 @@ void VersionPage::on_actionReload_triggered()
     reloadPackProfile();
     m_container->refreshContainer();
 }
-
 void VersionPage::on_actionRemove_triggered()
 {
-    if (ui->packageView->currentIndex().isValid())
+    const int row = currentRow();
+    if (row >= 0)
     {
         // FIXME: use actual model, not reloading.
-        if (!m_profile->remove(ui->packageView->currentIndex().row()))
+        if (!m_profile->remove(row))
         {
             QMessageBox::critical(this, tr("Error"), tr("Couldn't remove file"));
         }
@@ -324,28 +436,56 @@ void VersionPage::on_actionReplace_Minecraft_jar_triggered()
 
 void VersionPage::on_actionMove_up_triggered()
 {
+    const int row = currentRow();
+    auto *selectedComponent = current();
+    if (row < 0 || !selectedComponent) {
+        return;
+    }
+
     try
     {
-        m_profile->move(currentRow(), PackProfile::MoveUp);
+        m_profile->move(row, PackProfile::MoveUp);
     }
     catch (const Exception &e)
     {
         QMessageBox::critical(this, tr("Error"), e.cause());
     }
-    updateButtons();
+
+    int selectedRow = row;
+    for (int candidateRow = 0; candidateRow < m_profile->rowCount(); ++candidateRow) {
+        if (m_profile->getComponent(candidateRow) == selectedComponent) {
+            selectedRow = candidateRow;
+            break;
+        }
+    }
+    preselect(selectedRow);
 }
 
 void VersionPage::on_actionMove_down_triggered()
 {
+    const int row = currentRow();
+    auto *selectedComponent = current();
+    if (row < 0 || !selectedComponent) {
+        return;
+    }
+
     try
     {
-        m_profile->move(currentRow(), PackProfile::MoveDown);
+        m_profile->move(row, PackProfile::MoveDown);
     }
     catch (const Exception &e)
     {
         QMessageBox::critical(this, tr("Error"), e.cause());
     }
-    updateButtons();
+
+    int selectedRow = row;
+    for (int candidateRow = 0; candidateRow < m_profile->rowCount(); ++candidateRow) {
+        if (m_profile->getComponent(candidateRow) == selectedComponent) {
+            selectedRow = candidateRow;
+            break;
+        }
+    }
+    preselect(selectedRow);
 }
 
 void VersionPage::on_actionChange_version_triggered()
@@ -599,29 +739,17 @@ void VersionPage::on_actionMinecraftFolder_triggered()
     DesktopServices::openDirectory(m_inst->gameRoot());
 }
 
-void VersionPage::versionCurrent(const QModelIndex &current, const QModelIndex &previous)
-{
-    currentIdx = current.row();
-    updateButtons(currentIdx);
-}
-
 void VersionPage::preselect(int row)
 {
-    if(row < 0)
-    {
+    if (row < 0) {
         row = 0;
     }
-    if(row >= m_profile->rowCount(QModelIndex()))
-    {
-        row = m_profile->rowCount(QModelIndex()) - 1;
+    if (row >= m_profile->rowCount()) {
+        row = m_profile->rowCount() - 1;
     }
-    if(row < 0)
-    {
-        return;
-    }
-    auto model_index = m_profile->index(row);
-    ui->packageView->selectionModel()->select(model_index, QItemSelectionModel::SelectCurrent | QItemSelectionModel::Rows);
-    updateButtons(row);
+    currentIdx = row;
+    emit selectionChanged();
+    updateButtons();
 }
 
 void VersionPage::onGameUpdateError(QString error)
@@ -639,14 +767,7 @@ Component * VersionPage::current()
     return m_profile->getComponent(row);
 }
 
-int VersionPage::currentRow()
-{
-    if (ui->packageView->selectionModel()->selectedRows().isEmpty())
-    {
-        return -1;
-    }
-    return ui->packageView->selectionModel()->selectedRows().first().row();
-}
+int VersionPage::currentRow() const { return currentIdx; }
 
 void VersionPage::on_actionCustomize_triggered()
 {
@@ -700,11 +821,3 @@ void VersionPage::on_actionRevert_triggered()
     preselect(currentIdx);
     m_container->refreshContainer();
 }
-
-void VersionPage::onFilterTextChanged(const QString &newContents)
-{
-    m_filterModel->setFilterFixedString(newContents);
-}
-
-#include "VersionPage.moc"
-

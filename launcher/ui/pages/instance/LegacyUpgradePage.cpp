@@ -1,6 +1,10 @@
 #include "LegacyUpgradePage.h"
-#include "ui_LegacyUpgradePage.h"
 
+#include <QLabel>
+#include <QQuickWidget>
+#include <QStackedLayout>
+
+#include "BaseInstance.h"
 #include "InstanceList.h"
 #include "minecraft/legacy/LegacyInstance.h"
 #include "minecraft/legacy/LegacyUpgradeTask.h"
@@ -10,14 +14,64 @@
 #include "ui/dialogs/ProgressDialog.h"
 
 LegacyUpgradePage::LegacyUpgradePage(InstancePtr inst, QWidget *parent)
-    : QWidget(parent), ui(new Ui::LegacyUpgradePage), m_inst(inst)
+    : QWidget(parent), m_inst(std::move(inst))
 {
-    ui->setupUi(this);
+    connect(m_inst.get(), &BaseInstance::runningStatusChanged, this,
+            &LegacyUpgradePage::updateRunningStatus);
+
+    auto *stack = new QStackedLayout(this);
+    stack->setContentsMargins(0, 0, 0, 0);
+
+    auto *qmlWidget = new QQuickWidget(this);
+    qmlWidget->setObjectName(QStringLiteral("legacyUpgradePageQml"));
+    qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+    qmlWidget->setInitialProperties(
+        {{QStringLiteral("pageController"),
+          QVariant::fromValue(static_cast<QObject *>(this))}});
+    stack->addWidget(qmlWidget);
+    stack->setCurrentWidget(qmlWidget);
+
+    auto *errorLabel = new QLabel(tr("The legacy upgrade page could not be loaded."), this);
+    errorLabel->setAlignment(Qt::AlignCenter);
+    errorLabel->setWordWrap(true);
+    stack->addWidget(errorLabel);
+
+    const auto showLoadError = [qmlWidget, stack, errorLabel]() {
+        QStringList details;
+        for (const auto &error : qmlWidget->errors()) {
+            details.append(error.toString());
+        }
+        if (details.isEmpty()) {
+            details.append(QObject::tr("No QML diagnostic was provided."));
+        }
+        qCritical() << "Legacy upgrade page QML failed to load:" << details.join('\n');
+        errorLabel->setToolTip(details.join('\n'));
+        stack->setCurrentWidget(errorLabel);
+    };
+    connect(qmlWidget, &QQuickWidget::statusChanged, this,
+            [qmlWidget, showLoadError](QQuickWidget::Status status) {
+                if (status == QQuickWidget::Error ||
+                    (status == QQuickWidget::Ready && !qmlWidget->rootObject())) {
+                    showLoadError();
+                }
+            });
+    qmlWidget->setSource(QUrl(QStringLiteral("qrc:/qml/LegacyUpgradePage.qml")));
+    if (qmlWidget->status() == QQuickWidget::Error ||
+        (qmlWidget->status() == QQuickWidget::Ready && !qmlWidget->rootObject())) {
+        showLoadError();
+    }
 }
 
-LegacyUpgradePage::~LegacyUpgradePage()
+LegacyUpgradePage::~LegacyUpgradePage() = default;
+
+bool LegacyUpgradePage::upgradeEnabled() const
 {
-    delete ui;
+    return !m_inst->isRunning();
+}
+
+void LegacyUpgradePage::updateRunningStatus(bool)
+{
+    emit upgradeEnabledChanged();
 }
 
 void LegacyUpgradePage::runModalTask(Task *task)
@@ -34,8 +88,11 @@ void LegacyUpgradePage::runModalTask(Task *task)
     }
 }
 
-void LegacyUpgradePage::on_upgradeButton_clicked()
+void LegacyUpgradePage::upgrade()
 {
+    if (!upgradeEnabled()) {
+        return;
+    }
     QString newName = tr("%1 (Migrated)").arg(m_inst->name());
     auto upgradeTask = new LegacyUpgradeTask(m_inst);
     upgradeTask->setName(newName);

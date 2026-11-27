@@ -1,8 +1,6 @@
 #include "PageDialog.h"
 
-#include <QDialogButtonBox>
 #include <QKeyEvent>
-#include <QPushButton>
 #include <QVBoxLayout>
 
 #ifdef Q_OS_WIN
@@ -31,14 +29,6 @@ PageDialog::PageDialog(BasePageProvider *pageProvider, QString defaultId,
   mainLayout->addWidget(m_container);
 
   setLayout(mainLayout);
-
-  QDialogButtonBox *buttons =
-      new QDialogButtonBox(QDialogButtonBox::Help);
-  buttons->setContentsMargins(6, 6, 6, 6);
-  m_container->addButtons(buttons);
-
-  connect(buttons->button(QDialogButtonBox::Help), SIGNAL(clicked()),
-          m_container, SLOT(help()));
 
 }
 

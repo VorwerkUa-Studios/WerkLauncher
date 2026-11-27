@@ -1,58 +1,59 @@
-/* Copyright 2013-2021 MultiMC Contributors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 #pragma once
 
 #include <QDialog>
-#include "BaseVersion.h"
-#include <BaseInstance.h>
+#include <QStringList>
+#include "BaseInstance.h"
 
-class BaseInstance;
-
-namespace Ui
-{
-class CopyInstanceDialog;
-}
-
-class CopyInstanceDialog : public QDialog
-{
+class CopyInstanceDialog : public QDialog {
     Q_OBJECT
+    Q_PROPERTY(QString instName READ instName WRITE setInstName NOTIFY instNameChanged)
+    Q_PROPERTY(QString instGroup READ instGroup WRITE setInstGroup NOTIFY instGroupChanged)
+    Q_PROPERTY(QString iconKey READ iconKey WRITE setIconKey NOTIFY iconKeyChanged)
+    Q_PROPERTY(QStringList availableGroups READ availableGroups CONSTANT)
+    Q_PROPERTY(bool shouldCopySaves READ shouldCopySaves WRITE setShouldCopySaves NOTIFY shouldCopySavesChanged)
+    Q_PROPERTY(bool shouldKeepPlaytime READ shouldKeepPlaytime WRITE setShouldKeepPlaytime NOTIFY shouldKeepPlaytimeChanged)
+    Q_PROPERTY(bool canAccept READ canAccept NOTIFY canAcceptChanged)
 
 public:
-    explicit CopyInstanceDialog(InstancePtr original, QWidget *parent = 0);
-    ~CopyInstanceDialog();
+    explicit CopyInstanceDialog(InstancePtr original, QWidget *parent = nullptr);
+    ~CopyInstanceDialog() override;
 
-    void updateDialogState();
+    QString instName() const { return m_instName; }
+    void setInstName(const QString &value);
 
-    QString instName() const;
-    QString instGroup() const;
-    QString iconKey() const;
-    bool shouldCopySaves() const;
-    bool shouldKeepPlaytime() const;
+    QString instGroup() const { return m_instGroup; }
+    void setInstGroup(const QString &value);
 
-private
-slots:
-    void on_iconButton_clicked();
-    void on_instNameTextBox_textChanged(const QString &arg1);
-    void on_copySavesCheckbox_stateChanged(int state);
-    void on_keepPlaytimeCheckbox_stateChanged(int state);
+    QString iconKey() const { return m_iconKey; }
+    void setIconKey(const QString &value);
+
+    QStringList availableGroups() const;
+
+    bool shouldCopySaves() const { return m_copySaves; }
+    void setShouldCopySaves(bool value);
+
+    bool shouldKeepPlaytime() const { return m_keepPlaytime; }
+    void setShouldKeepPlaytime(bool value);
+
+    bool canAccept() const { return !m_instName.trimmed().isEmpty(); }
+
+    Q_INVOKABLE void pickIcon();
+    Q_INVOKABLE void acceptDialog();
+    Q_INVOKABLE void rejectDialog();
+
+signals:
+    void instNameChanged();
+    void instGroupChanged();
+    void iconKeyChanged();
+    void shouldCopySavesChanged();
+    void shouldKeepPlaytimeChanged();
+    void canAcceptChanged();
 
 private:
-    Ui::CopyInstanceDialog *ui;
-    QString InstIconKey;
     InstancePtr m_original;
+    QString m_instName;
+    QString m_instGroup;
+    QString m_iconKey;
     bool m_copySaves = true;
     bool m_keepPlaytime = true;
 };

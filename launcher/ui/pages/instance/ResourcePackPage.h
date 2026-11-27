@@ -1,7 +1,6 @@
 #pragma once
 
 #include "ModFolderPage.h"
-#include "ui_ModFolderPage.h"
 
 class ResourcePackPage : public ModFolderPage
 {
@@ -11,7 +10,7 @@ public:
         : ModFolderPage(instance, instance->resourcePackList(), "resourcepacks",
                         "resourcepacks", tr("Resource packs"), "Resource-packs", parent)
     {
-        ui->actionView_configs->setVisible(false);
+        setShowConfigFolder(false);
     }
     virtual ~ResourcePackPage() {}
 

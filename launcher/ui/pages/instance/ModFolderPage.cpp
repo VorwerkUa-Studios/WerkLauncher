@@ -14,279 +14,701 @@
  */
 
 #include "ModFolderPage.h"
-#include "ui_ModFolderPage.h"
 
 #include <QAbstractItemModel>
-#include <QEvent>
-#include <QKeyEvent>
-#include <QMenu>
+#include <QDebug>
+#include <QDesktopServices>
+#include <QFileInfo>
+#include <QLabel>
+#include <QLocale>
 #include <QMessageBox>
-#include <QSortFilterProxyModel>
+#include <QQmlError>
+#include <QQuickWidget>
+#include <QRegularExpression>
+#include <QStackedLayout>
 #include <QTimer>
-#include <QModelIndex>
-
+#include <QUrl>
+#include <algorithm>
+#include <utility>
 
 #include "Application.h"
-
-#include "ui/GuiUtil.h"
-#include "ui/dialogs/CustomMessageBox.h"
-
-
 #include "DesktopServices.h"
-
+#include "Version.h"
 #include "minecraft/PackProfile.h"
-#include "minecraft/VersionFilterData.h"
 #include "minecraft/mod/Mod.h"
 #include "minecraft/mod/ModFolderModel.h"
-
-#include "ui/dialogs/ModDownloaderDialog.h"
-
-#include "ui/pages/instance/ModUpdateDelegate.h"
-#include "minecraft/mod/ModUpdateCheckTask.h"
-#include "minecraft/mod/ModUpdateInstallTask.h"
-#include "ui/dialogs/ProgressDialog.h"
+#include "minecraft/VersionFilterData.h"
+#include "ui/GuiUtil.h"
 #include "ui/dialogs/CustomMessageBox.h"
-
-#include "Version.h"
+#include "ui/dialogs/ModDownloaderDialog.h"
+#include "ui/dialogs/ProgressDialog.h"
+#include "ui/pages/modplatform/unified/UnifiedModData.h"
+#include "minecraft/mod/ModUpdateInstallTask.h"
 
 namespace {
-// FIXME: wasteful
-void RemoveThePrefix(QString &string) {
-  QRegularExpression regex(
-      QStringLiteral("^(([Tt][Hh][eE])|([Tt][eE][Hh])) +"));
-  string.remove(regex);
-  string = string.trimmed();
+QString sortName(const Mod &mod)
+{
+    QString name = mod.name().isEmpty() ? mod.mmc_id() : mod.name();
+    static const QRegularExpression articlePrefix(
+        QStringLiteral("^(the|teh) +"), QRegularExpression::CaseInsensitiveOption);
+    name.remove(articlePrefix);
+    return name.trimmed();
 }
-} // namespace
 
-class ModSortProxy : public QSortFilterProxyModel {
-public:
-  explicit ModSortProxy(QObject *parent = 0) : QSortFilterProxyModel(parent) {}
-
-protected:
-  bool filterAcceptsRow(int source_row,
-                        const QModelIndex &source_parent) const override {
-    ModFolderModel *model = qobject_cast<ModFolderModel *>(sourceModel());
-    if (!model) {
-      return false;
+QString modVersionText(const Mod &mod)
+{
+    if (mod.type() == Mod::MOD_FOLDER) {
+        return QObject::tr("Folder");
     }
-    const auto &mod = model->at(source_row);
-    if (mod.name().contains(filterRegularExpression())) {
-      return true;
+    if (mod.type() == Mod::MOD_SINGLEFILE) {
+        return QObject::tr("File");
     }
-    if (mod.description().contains(filterRegularExpression())) {
-      return true;
-    }
-    for (auto &author : mod.authors()) {
-      if (author.contains(filterRegularExpression())) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  bool lessThan(const QModelIndex &source_left,
-                const QModelIndex &source_right) const override {
-    ModFolderModel *model = qobject_cast<ModFolderModel *>(sourceModel());
-    if (!model || !source_left.isValid() || !source_right.isValid() ||
-        source_left.column() != source_right.column()) {
-      return QSortFilterProxyModel::lessThan(source_left, source_right);
-    }
-
-    // we are now guaranteed to have two valid indexes in the same column... we
-    // love the provided invariants unconditionally and proceed.
-
-    auto column = (ModFolderModel::Columns)source_left.column();
-    bool invert = false;
-
-    // Always sort mods with updates to the top, regardless of column
-    const auto &modL = model->at(source_left.row());
-    const auto &modR = model->at(source_right.row());
-    if (modL.hasUpdate() != modR.hasUpdate()) {
-        return modL.hasUpdate();
-    }
-
-    switch (column) {
-    // GH-2550 - sort by enabled/disabled
-    case ModFolderModel::ActiveColumn: {
-      auto dataL = source_left.data(Qt::CheckStateRole).toBool();
-      auto dataR = source_right.data(Qt::CheckStateRole).toBool();
-      if (dataL != dataR) {
-        return dataL > dataR;
-      }
-      // fallthrough
-      invert = sortOrder() == Qt::DescendingOrder;
-    }
-    // GH-2722 - sort mod names in a way that discards "The" prefixes
-    case ModFolderModel::NameColumn: {
-      auto dataL = model
-                       ->data(model->index(source_left.row(),
-                                           ModFolderModel::NameColumn))
-                       .toString();
-      RemoveThePrefix(dataL);
-      auto dataR = model
-                       ->data(model->index(source_right.row(),
-                                           ModFolderModel::NameColumn))
-                       .toString();
-      RemoveThePrefix(dataR);
-
-      auto less = dataL.compare(dataR, sortCaseSensitivity());
-      if (less != 0) {
-        return invert ? (less > 0) : (less < 0);
-      }
-      // fallthrough
-      invert = sortOrder() == Qt::DescendingOrder;
-    }
-    // GH-2762 - sort versions by parsing them as versions
-    case ModFolderModel::VersionColumn: {
-      auto dataL =
-          Version(model
-                      ->data(model->index(source_left.row(),
-                                          ModFolderModel::VersionColumn))
-                      .toString());
-      auto dataR =
-          Version(model
-                      ->data(model->index(source_right.row(),
-                                          ModFolderModel::VersionColumn))
-                      .toString());
-      return invert ? (dataL > dataR) : (dataL < dataR);
-    }
-    default: {
-      return QSortFilterProxyModel::lessThan(source_left, source_right);
-    }
-    }
-  }
-};
+    return mod.version();
+}
+}
 
 ModFolderPage::ModFolderPage(BaseInstance *inst,
                              std::shared_ptr<ModFolderModel> mods, QString id,
                              QString iconName, QString displayName,
                              QString helpPage, QWidget *parent)
-    : QMainWindow(parent), ui(new Ui::ModFolderPage) {
-  ui->setupUi(this);
-  ui->actionsToolbar->insertSpacer(ui->actionView_configs);
+    : QWidget(parent),
+      m_inst(inst),
+      m_mods(std::move(mods)),
+      m_iconName(std::move(iconName)),
+      m_id(std::move(id)),
+      m_displayName(std::move(displayName)),
+      m_helpName(std::move(helpPage))
+{
+    m_controlsEnabled = m_inst && !m_inst->isRunning();
+    m_mods->setInstance(m_inst);
 
-  m_inst = inst;
-  on_RunningState_changed(m_inst && m_inst->isRunning());
-  m_mods = mods;
-  m_id = id;
-  m_displayName = displayName;
-  m_iconName = iconName;
-  m_helpName = helpPage;
-  
-  if (m_id == "resourcepacks") {
-      ui->actionDownload->setText(tr("Завантажити ресурспаки"));
-  } else if (m_id == "shaderpacks") {
-      ui->actionDownload->setText(tr("Завантажити шейдери"));
-  } else {
-      ui->actionDownload->setText(tr("Завантажити моди"));
-  }
-  
-  m_fileSelectionFilter = "%1 (*.zip *.jar)";
-  m_filterModel = new ModSortProxy(this);
-  m_filterModel->setDynamicSortFilter(true);
-  m_filterModel->setFilterCaseSensitivity(Qt::CaseInsensitive);
-  m_filterModel->setSortCaseSensitivity(Qt::CaseInsensitive);
-  m_filterModel->setSourceModel(m_mods.get());
-  m_filterModel->setFilterKeyColumn(-1);
-  ui->modTreeView->setModel(m_filterModel);
-  ui->modTreeView->installEventFilter(this);
-  ui->modTreeView->sortByColumn(1, Qt::AscendingOrder);
-  ui->modTreeView->setContextMenuPolicy(Qt::CustomContextMenu);
-  connect(ui->modTreeView, &ModListView::customContextMenuRequested, this,
-          &ModFolderPage::ShowContextMenu);
-  connect(ui->modTreeView, &ModListView::activated, this,
-          &ModFolderPage::modItemActivated);
+    const auto publishChanges = [this]() { refreshAfterModelChange(); };
+    connect(m_mods.get(), &QAbstractItemModel::rowsInserted, this, publishChanges);
+    connect(m_mods.get(), &QAbstractItemModel::rowsRemoved, this, publishChanges);
+    connect(m_mods.get(), &QAbstractItemModel::dataChanged, this, publishChanges);
+    connect(m_mods.get(), &QAbstractItemModel::modelReset, this, publishChanges);
+    connect(m_mods.get(), &QAbstractItemModel::layoutChanged, this, publishChanges);
+    if (m_inst) {
+        connect(m_inst, &BaseInstance::runningStatusChanged, this,
+                &ModFolderPage::onRunningStatusChanged);
+    }
 
-  auto smodel = ui->modTreeView->selectionModel();
-  connect(smodel, &QItemSelectionModel::currentChanged, this,
-          &ModFolderPage::modCurrent);
-  connect(ui->filterEdit, &QLineEdit::textChanged, this,
-          &ModFolderPage::on_filterTextChanged);
-  connect(m_inst, &BaseInstance::runningStatusChanged, this,
-          &ModFolderPage::on_RunningState_changed);
-  
-  // Set instance on model for update checks
-  m_mods->setInstance(m_inst);
-  
-  // Set up update delegate on the Name column
-  auto *updateDelegate = new ModUpdateDelegate(m_mods.get(), this);
-  ui->modTreeView->setItemDelegateForColumn(ModFolderModel::NameColumn, updateDelegate);
-  connect(updateDelegate, &ModUpdateDelegate::updateClicked, this, [this](int sourceRow) {
-      if (sourceRow < 0 || sourceRow >= m_mods->rowCount(QModelIndex())) return;
-      auto mod = m_mods->at(sourceRow);
-      QString itemType = tr("елемент");
-      QString itemTypeCap = tr("Елемент");
-      if (m_mods->dir().dirName() == "mods") { itemType = tr("мод"); itemTypeCap = tr("Мод"); }
-      else if (m_mods->dir().dirName() == "resourcepacks") { itemType = tr("ресурспак"); itemTypeCap = tr("Ресурспак"); }
-      else if (m_mods->dir().dirName() == "shaderpacks") { itemType = tr("шейдер"); itemTypeCap = tr("Шейдер"); }
-      
-      if (mod.updateUrl().isEmpty()) {
-          CustomMessageBox::information(this, tr("Оновлення відсутнє"), 
-              tr("На жаль, посилання на завантаження відсутнє для '%1'.").arg(mod.name()));
-          return;
-      }
-      
-      QList<Mod> modsToUpdate;
-      modsToUpdate.append(mod);
-      
-      auto task = new ModUpdateInstallTask(m_inst, m_mods.get(), modsToUpdate, this);
-      ProgressDialog progDialog(this);
-      if (progDialog.execWithTask(task) == QDialog::Accepted) {
-          CustomMessageBox::information(this, tr("Оновлення завершено"), 
-              tr("%1 '%2' успішно оновлено!").arg(itemTypeCap, mod.name()));
-      } else {
-          CustomMessageBox::information(this, tr("Помилка"), 
-              tr("Не вдалося оновити %1 '%2':\n%3").arg(itemType, mod.name(), task->failReason()));
-      }
-  });
+    auto *stack = new QStackedLayout(this);
+    stack->setContentsMargins(0, 0, 0, 0);
 
-  if (m_mods->dir().dirName() == "resourcepacks") {
-      ui->actionUpdateAll->setToolTip(tr("Перевірити та оновити всі ресурспаки"));
-      ui->actionDownload->setToolTip(tr("Завантажити ресурспаки"));
-  } else if (m_mods->dir().dirName() == "shaderpacks") {
-      ui->actionUpdateAll->setToolTip(tr("Перевірити та оновити всі шейдери"));
-      ui->actionDownload->setToolTip(tr("Завантажити шейдери"));
-  } else {
-      ui->actionUpdateAll->setToolTip(tr("Перевірити та оновити всі моди"));
-      ui->actionDownload->setToolTip(tr("Завантажити моди"));
-  }
+    auto *qmlWidget = new QQuickWidget(this);
+    qmlWidget->setObjectName(m_id + QStringLiteral("PageQml"));
+    qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+    qmlWidget->setInitialProperties(
+        {{QStringLiteral("pageController"),
+          QVariant::fromValue(static_cast<QObject *>(this))}});
+    stack->addWidget(qmlWidget);
+    stack->setCurrentWidget(qmlWidget);
+
+    auto *errorLabel = new QLabel(tr("The mods and packs page could not be loaded."), this);
+    errorLabel->setAlignment(Qt::AlignCenter);
+    errorLabel->setWordWrap(true);
+    stack->addWidget(errorLabel);
+
+    const auto showLoadError = [qmlWidget, stack, errorLabel]() {
+        QStringList details;
+        for (const auto &error : qmlWidget->errors()) {
+            details.append(error.toString());
+        }
+        if (details.isEmpty()) {
+            details.append(QObject::tr("No QML diagnostic was provided."));
+        }
+        qCritical() << "Mods and packs page QML failed to load:"
+                    << details.join('\n');
+        errorLabel->setToolTip(details.join('\n'));
+        stack->setCurrentWidget(errorLabel);
+    };
+    connect(qmlWidget, &QQuickWidget::statusChanged, this,
+            [qmlWidget, showLoadError](QQuickWidget::Status status) {
+                if (status == QQuickWidget::Error ||
+                    (status == QQuickWidget::Ready &&
+                     !qmlWidget->rootObject())) {
+                    showLoadError();
+                }
+            });
+    qmlWidget->setSource(QUrl(QStringLiteral("qrc:/qml/ModFolderPage.qml")));
+    if (qmlWidget->status() == QQuickWidget::Error ||
+        (qmlWidget->status() == QQuickWidget::Ready &&
+         !qmlWidget->rootObject())) {
+        showLoadError();
+    }
 }
 
-void ModFolderPage::modItemActivated(const QModelIndex &) {
-  if (!m_controlsEnabled) {
-    return;
-  }
-  auto selection = m_filterModel->mapSelectionToSource(
-      ui->modTreeView->selectionModel()->selection());
-  m_mods->setModStatus(selection.indexes(), ModFolderModel::Toggle);
+ModFolderPage::~ModFolderPage()
+{
+    m_mods->stopWatching();
 }
 
-QMenu *ModFolderPage::createPopupMenu() {
-  QMenu *filteredMenu = QMainWindow::createPopupMenu();
-  filteredMenu->removeAction(ui->actionsToolbar->toggleViewAction());
-  return filteredMenu;
+QIcon ModFolderPage::icon() const
+{
+    return APPLICATION->getThemedIcon(m_iconName);
 }
 
-void ModFolderPage::ShowContextMenu(const QPoint &pos) {
-  auto menu = ui->actionsToolbar->createContextMenu(this, tr("Context menu"));
-  menu->exec(ui->modTreeView->mapToGlobal(pos));
-  delete menu;
+bool ModFolderPage::shouldDisplay() const
+{
+    return true;
 }
 
-void ModFolderPage::openedImpl() {
-  m_mods->startWatching();
-  // Check for mod updates from Modrinth
-  QTimer::singleShot(2000, this, [this]() {
-      m_mods->checkModUpdates();
-  });
+void ModFolderPage::setShowConfigFolder(bool show)
+{
+    if (m_showConfigFolder == show) {
+        return;
+    }
+    m_showConfigFolder = show;
+    emit actionStatesChanged();
 }
 
-void ModFolderPage::closedImpl() { m_mods->stopWatching(); }
+void ModFolderPage::openedImpl()
+{
+    m_mods->startWatching();
+    QTimer::singleShot(2000, this, [this]() { m_mods->checkModUpdates(); });
+}
 
-void ModFolderPage::on_filterTextChanged(const QString &newContents) {
-  m_viewFilter = newContents;
-  m_filterModel->setFilterFixedString(m_viewFilter);
+void ModFolderPage::closedImpl()
+{
+    m_mods->stopWatching();
+}
+
+QVariantMap ModFolderPage::modData(int sourceRow) const
+{
+    if (sourceRow < 0 || sourceRow >= m_mods->rowCount(QModelIndex())) {
+        return {};
+    }
+
+    const auto &mod = m_mods->at(static_cast<size_t>(sourceRow));
+    const QString modId = mod.mmc_id();
+    QVariantMap result;
+    result.insert(QStringLiteral("sourceRow"), sourceRow);
+    result.insert(QStringLiteral("id"), modId);
+    result.insert(QStringLiteral("name"),
+                  mod.name().isEmpty() ? modId : mod.name());
+    result.insert(QStringLiteral("version"), modVersionText(mod));
+    result.insert(QStringLiteral("authors"), mod.authors().join(QStringLiteral(", ")));
+    result.insert(QStringLiteral("description"), mod.description());
+    result.insert(QStringLiteral("homepage"), mod.homeurl());
+    result.insert(QStringLiteral("enabled"), mod.enabled());
+    result.insert(QStringLiteral("selected"), m_selectedModIds.contains(modId));
+    result.insert(QStringLiteral("hasUpdate"), mod.hasUpdate());
+    result.insert(QStringLiteral("latestVersion"), mod.latestVersion());
+    result.insert(QStringLiteral("fileName"), mod.filename().fileName());
+    result.insert(QStringLiteral("modified"),
+                  QLocale().toString(mod.dateTimeChanged(), QLocale::ShortFormat));
+    return result;
+}
+
+QList<int> ModFolderPage::visibleRows() const
+{
+    QList<int> rows;
+    const QString filter = m_filterText.trimmed();
+    for (int row = 0; row < m_mods->rowCount(QModelIndex()); ++row) {
+        const auto &mod = m_mods->at(static_cast<size_t>(row));
+        if (!filter.isEmpty()) {
+            QStringList searchable{mod.name(), mod.description()};
+            searchable.append(mod.authors());
+            bool matches = false;
+            for (const auto &field : searchable) {
+                if (field.contains(filter, Qt::CaseInsensitive)) {
+                    matches = true;
+                    break;
+                }
+            }
+            if (!matches) {
+                continue;
+            }
+        }
+        rows.append(row);
+    }
+
+    std::stable_sort(rows.begin(), rows.end(), [this](int leftRow, int rightRow) {
+        const auto &left = m_mods->at(static_cast<size_t>(leftRow));
+        const auto &right = m_mods->at(static_cast<size_t>(rightRow));
+        if (left.hasUpdate() != right.hasUpdate()) {
+            return left.hasUpdate();
+        }
+
+        int comparison = 0;
+        if (m_sortMode == QStringLiteral("version")) {
+            const Version leftVersion(left.version());
+            const Version rightVersion(right.version());
+            if (leftVersion < rightVersion) {
+                comparison = -1;
+            } else if (leftVersion > rightVersion) {
+                comparison = 1;
+            }
+        } else if (m_sortMode == QStringLiteral("modified")) {
+            if (left.dateTimeChanged() < right.dateTimeChanged()) {
+                comparison = -1;
+            } else if (left.dateTimeChanged() > right.dateTimeChanged()) {
+                comparison = 1;
+            }
+        } else if (m_sortMode == QStringLiteral("enabled")) {
+            if (left.enabled() != right.enabled()) {
+                comparison = left.enabled() ? -1 : 1;
+            }
+        } else {
+            const int nameComparison =
+                QString::localeAwareCompare(sortName(left), sortName(right));
+            comparison = (nameComparison > 0) - (nameComparison < 0);
+        }
+
+        if (comparison == 0) {
+            const int nameComparison =
+                QString::localeAwareCompare(sortName(left), sortName(right));
+            comparison = (nameComparison > 0) - (nameComparison < 0);
+        }
+        return m_sortDescending ? comparison > 0 : comparison < 0;
+    });
+    return rows;
+}
+
+QVariantList ModFolderPage::items() const
+{
+    QVariantList result;
+    for (const int row : visibleRows()) {
+        result.append(modData(row));
+    }
+    return result;
+}
+
+QVariantMap ModFolderPage::selectedMod() const
+{
+    const int row = findModRow(m_currentModId);
+    return modData(row);
+}
+
+QVariantMap ModFolderPage::actionStates() const
+{
+    const bool hasSelection = !m_selectedModIds.isEmpty();
+    QVariantMap result;
+    result.insert(QStringLiteral("add"), m_controlsEnabled);
+    result.insert(QStringLiteral("toggle"), m_controlsEnabled);
+    result.insert(QStringLiteral("download"), true);
+    result.insert(QStringLiteral("updateAll"), true);
+    result.insert(QStringLiteral("remove"), m_controlsEnabled && hasSelection);
+    result.insert(QStringLiteral("enable"), m_controlsEnabled && hasSelection);
+    result.insert(QStringLiteral("disable"), m_controlsEnabled && hasSelection);
+    result.insert(QStringLiteral("configs"), m_showConfigFolder);
+    result.insert(QStringLiteral("folder"), true);
+    return result;
+}
+
+void ModFolderPage::setFilterText(const QString &text)
+{
+    if (m_filterText == text) {
+        return;
+    }
+    m_filterText = text;
+    emit itemsChanged();
+}
+
+void ModFolderPage::setSortMode(const QString &mode)
+{
+    static const QSet<QString> supportedModes{
+        QStringLiteral("name"), QStringLiteral("version"),
+        QStringLiteral("modified"), QStringLiteral("enabled")};
+    if (!supportedModes.contains(mode)) {
+        qWarning() << "Ignoring unsupported mod-list sort mode" << mode;
+        return;
+    }
+    if (m_sortMode == mode) {
+        return;
+    }
+    m_sortMode = mode;
+    emit itemsChanged();
+}
+
+void ModFolderPage::setSortDescending(bool descending)
+{
+    if (m_sortDescending == descending) {
+        return;
+    }
+    m_sortDescending = descending;
+    emit itemsChanged();
+}
+
+int ModFolderPage::findModRow(const QString &modId) const
+{
+    if (modId.isEmpty()) {
+        return -1;
+    }
+    for (int row = 0; row < m_mods->rowCount(QModelIndex()); ++row) {
+        if (m_mods->at(static_cast<size_t>(row)).mmc_id() == modId) {
+            return row;
+        }
+    }
+    return -1;
+}
+
+QList<int> ModFolderPage::selectedRows() const
+{
+    QList<int> rows;
+    for (const auto &modId : m_selectedModIds) {
+        const int row = findModRow(modId);
+        if (row >= 0) {
+            rows.append(row);
+        }
+    }
+    std::sort(rows.begin(), rows.end());
+    return rows;
+}
+
+void ModFolderPage::selectMod(const QString &modId, int modifiers)
+{
+    const int selectedRow = findModRow(modId);
+    if (selectedRow < 0) {
+        qWarning() << "Ignoring selection of an unknown mod" << modId;
+        return;
+    }
+
+    const bool controlHeld = modifiers & Qt::ControlModifier;
+    const bool shiftHeld = modifiers & Qt::ShiftModifier;
+    const QList<int> rows = visibleRows();
+    const int anchorRow = findModRow(m_selectionAnchorId);
+    const int visibleAnchor = rows.indexOf(anchorRow);
+    const int visibleCurrent = rows.indexOf(selectedRow);
+
+    if (shiftHeld && visibleAnchor >= 0 && visibleCurrent >= 0) {
+        if (!controlHeld) {
+            m_selectedModIds.clear();
+        }
+        const int first = std::min(visibleAnchor, visibleCurrent);
+        const int last = std::max(visibleAnchor, visibleCurrent);
+        for (int i = first; i <= last; ++i) {
+            m_selectedModIds.insert(
+                m_mods->at(static_cast<size_t>(rows.at(i))).mmc_id());
+        }
+    } else if (controlHeld) {
+        if (m_selectedModIds.contains(modId)) {
+            m_selectedModIds.remove(modId);
+        } else {
+            m_selectedModIds.insert(modId);
+        }
+        m_selectionAnchorId = modId;
+    } else {
+        m_selectedModIds = {modId};
+        m_selectionAnchorId = modId;
+    }
+
+    m_currentModId = modId;
+    emit itemsChanged();
+    emit selectionChanged();
+    emit actionStatesChanged();
+}
+
+void ModFolderPage::reconcileSelection()
+{
+    for (auto iter = m_selectedModIds.begin(); iter != m_selectedModIds.end();) {
+        if (findModRow(*iter) < 0) {
+            iter = m_selectedModIds.erase(iter);
+        } else {
+            ++iter;
+        }
+    }
+    if (findModRow(m_currentModId) < 0) {
+        m_currentModId = m_selectedModIds.isEmpty()
+                             ? QString()
+                             : *m_selectedModIds.constBegin();
+    }
+    if (findModRow(m_selectionAnchorId) < 0) {
+        m_selectionAnchorId = m_currentModId;
+    }
+}
+
+void ModFolderPage::refreshAfterModelChange()
+{
+    if (m_suppressModelUpdates) {
+        return;
+    }
+    reconcileSelection();
+    emit itemsChanged();
+    emit selectionChanged();
+    emit actionStatesChanged();
+}
+
+void ModFolderPage::applyModStatus(const QList<int> &rows, int action)
+{
+    if (!m_controlsEnabled || rows.isEmpty()) {
+        return;
+    }
+
+    const QList<int> previousSelection = selectedRows();
+    const int previousCurrentRow = findModRow(m_currentModId);
+    const int previousAnchorRow = findModRow(m_selectionAnchorId);
+    QModelIndexList indexes;
+    for (const int row : rows) {
+        if (row >= 0 && row < m_mods->rowCount(QModelIndex())) {
+            indexes.append(m_mods->index(row, ModFolderModel::ActiveColumn));
+        }
+    }
+
+    m_suppressModelUpdates = true;
+    m_mods->setModStatus(
+        indexes, static_cast<ModFolderModel::ModStatusAction>(action));
+    m_suppressModelUpdates = false;
+
+    m_selectedModIds.clear();
+    for (const int row : previousSelection) {
+        if (row >= 0 && row < m_mods->rowCount(QModelIndex())) {
+            m_selectedModIds.insert(
+                m_mods->at(static_cast<size_t>(row)).mmc_id());
+        }
+    }
+    if (previousCurrentRow >= 0 &&
+        previousCurrentRow < m_mods->rowCount(QModelIndex())) {
+        m_currentModId =
+            m_mods->at(static_cast<size_t>(previousCurrentRow)).mmc_id();
+    }
+    if (previousAnchorRow >= 0 &&
+        previousAnchorRow < m_mods->rowCount(QModelIndex())) {
+        m_selectionAnchorId =
+            m_mods->at(static_cast<size_t>(previousAnchorRow)).mmc_id();
+    }
+    refreshAfterModelChange();
+}
+
+void ModFolderPage::setModEnabled(int sourceRow, bool enabled)
+{
+    if (sourceRow < 0 || sourceRow >= m_mods->rowCount(QModelIndex()) ||
+        !m_controlsEnabled) {
+        return;
+    }
+    const QString modId =
+        m_mods->at(static_cast<size_t>(sourceRow)).mmc_id();
+    if (!m_selectedModIds.contains(modId)) {
+        selectMod(modId, Qt::NoModifier);
+    }
+    const auto action = enabled ? ModFolderModel::Enable : ModFolderModel::Disable;
+    applyModStatus({sourceRow}, action);
+}
+
+void ModFolderPage::installUpdate(int sourceRow)
+{
+    if (sourceRow < 0 || sourceRow >= m_mods->rowCount(QModelIndex())) {
+        qWarning() << "Ignoring update request for invalid mod row" << sourceRow;
+        return;
+    }
+    const Mod mod = m_mods->at(static_cast<size_t>(sourceRow));
+    if (!mod.hasUpdate()) {
+        qWarning() << "Ignoring update request for mod without an update"
+                   << mod.mmc_id();
+        return;
+    }
+    QString itemType = tr("елемент");
+    QString itemTypeCap = tr("Елемент");
+    if (m_id == QStringLiteral("mods")) {
+        itemType = tr("мод");
+        itemTypeCap = tr("Мод");
+    } else if (m_id == QStringLiteral("resourcepacks") ||
+               m_id == QStringLiteral("texturepacks")) {
+        itemType = tr("ресурспак");
+        itemTypeCap = tr("Ресурспак");
+    } else if (m_id == QStringLiteral("shaderpacks")) {
+        itemType = tr("шейдер");
+        itemTypeCap = tr("Шейдер");
+    }
+
+    if (mod.updateUrl().isEmpty()) {
+        CustomMessageBox::information(
+            this, tr("Оновлення відсутнє"),
+            tr("На жаль, посилання на завантаження відсутнє для '%1'.")
+                .arg(mod.name()));
+        return;
+    }
+
+    auto *task = new ModUpdateInstallTask(m_inst, m_mods.get(), {mod}, this);
+    ProgressDialog progressDialog(this);
+    if (progressDialog.execWithTask(task) == QDialog::Accepted) {
+        CustomMessageBox::information(
+            this, tr("Оновлення завершено"),
+            tr("%1 '%2' успішно оновлено!").arg(itemTypeCap, mod.name()));
+    } else {
+        CustomMessageBox::information(
+            this, tr("Помилка"),
+            tr("Не вдалося оновити %1 '%2':\n%3")
+                .arg(itemType, mod.name(), task->failReason()));
+    }
+}
+
+void ModFolderPage::installDroppedFiles(const QVariantList &urls)
+{
+    if (!m_controlsEnabled) {
+        return;
+    }
+    for (const auto &value : urls) {
+        QUrl url = value.toUrl();
+        if (!url.isValid() && !value.toString().isEmpty()) {
+            url = QUrl::fromUserInput(value.toString());
+        }
+        if (!url.isLocalFile()) {
+            qWarning() << "Ignoring non-local file dropped onto mod page" << url;
+            continue;
+        }
+        m_mods->installMod(url.toLocalFile());
+    }
+}
+
+void ModFolderPage::openModHomepage()
+{
+    const QString homepage = selectedMod().value(QStringLiteral("homepage")).toString();
+    const QUrl url(homepage);
+    if ((url.scheme() != QStringLiteral("http") &&
+         url.scheme() != QStringLiteral("https")) ||
+        url.host().isEmpty()) {
+        qWarning() << "Ignoring invalid mod homepage URL" << homepage;
+        return;
+    }
+    if (!QDesktopServices::openUrl(url)) {
+        qWarning() << "Failed to open mod homepage" << url;
+    }
+}
+
+void ModFolderPage::triggerAction(const QString &actionName)
+{
+    static const QSet<QString> supportedActions{
+        QStringLiteral("add"),      QStringLiteral("download"),
+        QStringLiteral("updateAll"), QStringLiteral("remove"),
+        QStringLiteral("enable"),   QStringLiteral("disable"),
+        QStringLiteral("configs"),  QStringLiteral("folder")};
+    if (!supportedActions.contains(actionName)) {
+        qWarning() << "Ignoring unknown mods-page action" << actionName;
+        return;
+    }
+    const QVariantMap states = actionStates();
+    if (!states.value(actionName).toBool()) {
+        return;
+    }
+
+    if (actionName == QStringLiteral("add")) addFiles();
+    else if (actionName == QStringLiteral("download")) openDownloader();
+    else if (actionName == QStringLiteral("updateAll")) updateAll();
+    else if (actionName == QStringLiteral("remove")) removeSelected();
+    else if (actionName == QStringLiteral("enable")) enableSelected();
+    else if (actionName == QStringLiteral("disable")) disableSelected();
+    else if (actionName == QStringLiteral("configs")) viewConfigs();
+    else if (actionName == QStringLiteral("folder")) viewFolder();
+}
+
+void ModFolderPage::onRunningStatusChanged(bool running)
+{
+    const bool controlsEnabled = !running;
+    if (m_controlsEnabled == controlsEnabled) {
+        return;
+    }
+    m_controlsEnabled = controlsEnabled;
+    emit actionStatesChanged();
+    emit itemsChanged();
+}
+
+void ModFolderPage::addFiles()
+{
+    if (!m_controlsEnabled) {
+        return;
+    }
+    const auto files = GuiUtil::BrowseForFiles(
+        m_helpName,
+        tr("Select %1", "Select whatever type of files the page contains. "
+                        "Example: 'Loader Mods'")
+            .arg(m_displayName),
+        m_fileSelectionFilter.arg(m_displayName),
+        APPLICATION->settings()->get("CentralModsDir").toString(),
+        this->parentWidget());
+    for (const auto &filename : files) {
+        m_mods->installMod(filename);
+    }
+}
+
+void ModFolderPage::openDownloader()
+{
+    Unified::ProjectType projectType = Unified::ProjectType::Mod;
+    if (m_id == QStringLiteral("resourcepacks") ||
+        m_id == QStringLiteral("texturepacks")) {
+        projectType = Unified::ProjectType::ResourcePack;
+    } else if (m_id == QStringLiteral("shaderpacks")) {
+        projectType = Unified::ProjectType::ShaderPack;
+    }
+    ModDownloaderDialog dialog(m_inst, projectType, this);
+    dialog.exec();
+}
+
+void ModFolderPage::updateAll()
+{
+    QList<Mod> modsToUpdate;
+    for (int row = 0; row < m_mods->rowCount(QModelIndex()); ++row) {
+        const auto mod = m_mods->at(static_cast<size_t>(row));
+        if (mod.hasUpdate() && !mod.updateUrl().isEmpty()) {
+            modsToUpdate.append(mod);
+        }
+    }
+
+    if (modsToUpdate.isEmpty()) {
+        CustomMessageBox::information(
+            this, tr("Оновлення відсутні"),
+            tr("Немає доступних оновлень або посилання на завантаження відсутні."));
+        return;
+    }
+
+    QString itemTypePlural = tr("елемент(ів)");
+    if (m_id == QStringLiteral("mods")) {
+        itemTypePlural = tr("мод(ів)");
+    } else if (m_id == QStringLiteral("resourcepacks") ||
+               m_id == QStringLiteral("texturepacks")) {
+        itemTypePlural = tr("ресурспак(ів)");
+    } else if (m_id == QStringLiteral("shaderpacks")) {
+        itemTypePlural = tr("шейдер(ів)");
+    }
+
+    auto *task = new ModUpdateInstallTask(m_inst, m_mods.get(), modsToUpdate, this);
+    ProgressDialog progressDialog(this);
+    if (progressDialog.execWithTask(task) == QDialog::Accepted) {
+        CustomMessageBox::information(
+            this, tr("Оновлення завершено"),
+            tr("Успішно оновлено %1 %2!")
+                .arg(QString::number(modsToUpdate.size()), itemTypePlural));
+    } else {
+        CustomMessageBox::information(
+            this, tr("Помилка"),
+            tr("Під час оновлення виникла помилка:\n%1")
+                .arg(task->failReason()));
+    }
+}
+
+void ModFolderPage::removeSelected()
+{
+    if (!m_controlsEnabled) {
+        return;
+    }
+    QModelIndexList indexes;
+    for (const int row : selectedRows()) {
+        indexes.append(m_mods->index(row, ModFolderModel::ActiveColumn));
+    }
+    m_mods->deleteMods(indexes);
+}
+
+void ModFolderPage::enableSelected()
+{
+    applyModStatus(selectedRows(), ModFolderModel::Enable);
+}
+
+void ModFolderPage::disableSelected()
+{
+    applyModStatus(selectedRows(), ModFolderModel::Disable);
+}
+
+void ModFolderPage::viewFolder()
+{
+    DesktopServices::openDirectory(m_mods->dir().absolutePath());
+}
+
+void ModFolderPage::viewConfigs()
+{
+    if (m_showConfigFolder) {
+        DesktopServices::openDirectory(m_inst->instanceConfigFolder());
+    }
 }
 
 CoreModFolderPage::CoreModFolderPage(BaseInstance *inst,
@@ -294,176 +716,22 @@ CoreModFolderPage::CoreModFolderPage(BaseInstance *inst,
                                      QString id, QString iconName,
                                      QString displayName, QString helpPage,
                                      QWidget *parent)
-    : ModFolderPage(inst, mods, id, iconName, displayName, helpPage, parent) {}
-
-ModFolderPage::~ModFolderPage() {
-  m_mods->stopWatching();
-  delete ui;
+    : ModFolderPage(inst, std::move(mods), std::move(id), std::move(iconName),
+                    std::move(displayName), std::move(helpPage), parent)
+{
 }
 
-void ModFolderPage::on_RunningState_changed(bool running) {
-  if (m_controlsEnabled == !running) {
-    return;
-  }
-  m_controlsEnabled = !running;
-  ui->actionAdd->setEnabled(m_controlsEnabled);
-  ui->actionDisable->setEnabled(m_controlsEnabled);
-  ui->actionEnable->setEnabled(m_controlsEnabled);
-  ui->actionRemove->setEnabled(m_controlsEnabled);
-}
-
-bool ModFolderPage::shouldDisplay() const { return true; }
-
-bool CoreModFolderPage::shouldDisplay() const {
-  if (ModFolderPage::shouldDisplay()) {
-    auto inst = dynamic_cast<MinecraftInstance *>(m_inst);
-    if (!inst)
-      return true;
-    auto version = inst->getPackProfile();
-    if (!version)
-      return true;
-    if (!version->getComponent("net.minecraftforge")) {
-      return false;
+bool CoreModFolderPage::shouldDisplay() const
+{
+    auto *instance = dynamic_cast<MinecraftInstance *>(m_inst);
+    if (!instance) {
+        return true;
     }
-    if (!version->getComponent("net.minecraft")) {
-      return false;
+    auto profile = instance->getPackProfile();
+    if (!profile || !profile->getComponent("net.minecraftforge") ||
+        !profile->getComponent("net.minecraft")) {
+        return false;
     }
-    if (version->getComponent("net.minecraft")->getReleaseDateTime() <
-        g_VersionFilterData.legacyCutoffDate) {
-      return true;
-    }
-  }
-  return false;
-}
-
-bool ModFolderPage::modListFilter(QKeyEvent *keyEvent) {
-  switch (keyEvent->key()) {
-  case Qt::Key_Delete:
-    on_actionRemove_triggered();
-    return true;
-  case Qt::Key_Plus:
-    on_actionAdd_triggered();
-    return true;
-  default:
-    break;
-  }
-  return QWidget::eventFilter(ui->modTreeView, keyEvent);
-}
-
-bool ModFolderPage::eventFilter(QObject *obj, QEvent *ev) {
-  if (ev->type() != QEvent::KeyPress) {
-    return QWidget::eventFilter(obj, ev);
-  }
-  QKeyEvent *keyEvent = static_cast<QKeyEvent *>(ev);
-  if (obj == ui->modTreeView)
-    return modListFilter(keyEvent);
-  return QWidget::eventFilter(obj, ev);
-}
-
-void ModFolderPage::on_actionAdd_triggered() {
-  if (!m_controlsEnabled) {
-    return;
-  }
-  auto list = GuiUtil::BrowseForFiles(
-      m_helpName,
-      tr("Select %1", "Select whatever type of files the page contains. "
-                      "Example: 'Loader Mods'")
-          .arg(m_displayName),
-      m_fileSelectionFilter.arg(m_displayName),
-      APPLICATION->settings()->get("CentralModsDir").toString(),
-      this->parentWidget());
-  if (!list.empty()) {
-    for (auto filename : list) {
-      m_mods->installMod(filename);
-    }
-  }
-}
-
-void ModFolderPage::on_actionDownload_triggered() {
-  Unified::ProjectType ptype = Unified::ProjectType::Mod;
-  if (m_id == "resourcepacks") ptype = Unified::ProjectType::ResourcePack;
-  else if (m_id == "shaderpacks") ptype = Unified::ProjectType::ShaderPack;
-
-  ModDownloaderDialog dialog(m_inst, ptype, this);
-  if (dialog.exec() == QDialog::Accepted) {
-    // Refresh the mod list if something was installed
-  }
-}
-
-void ModFolderPage::on_actionUpdateAll_triggered() {
-    QList<Mod> modsToUpdate;
-    for (int i = 0; i < m_mods->rowCount(QModelIndex()); ++i) {
-        auto mod = m_mods->at(i);
-        if (mod.hasUpdate() && !mod.updateUrl().isEmpty()) {
-            modsToUpdate.append(mod);
-        }
-    }
-    
-    if (modsToUpdate.isEmpty()) {
-        CustomMessageBox::information(this, tr("Оновлення відсутні"), 
-            tr("Немає доступних оновлень або посилання на завантаження відсутні."));
-        return;
-    }
-    
-    QString itemTypePlural = tr("елемент(ів)");
-    if (m_mods->dir().dirName() == "mods") itemTypePlural = tr("мод(ів)");
-    else if (m_mods->dir().dirName() == "resourcepacks") itemTypePlural = tr("ресурспак(ів)");
-    else if (m_mods->dir().dirName() == "shaderpacks") itemTypePlural = tr("шейдер(ів)");
-
-    auto task = new ModUpdateInstallTask(m_inst, m_mods.get(), modsToUpdate, this);
-    ProgressDialog progDialog(this);
-    if (progDialog.execWithTask(task) == QDialog::Accepted) {
-        CustomMessageBox::information(this, tr("Оновлення завершено"), 
-            tr("Успішно оновлено %1 %2!").arg(QString::number(modsToUpdate.size()), itemTypePlural));
-    } else {
-        CustomMessageBox::information(this, tr("Помилка"), 
-            tr("Під час оновлення виникла помилка:\n%1").arg(task->failReason()));
-    }
-}
-
-void ModFolderPage::on_actionEnable_triggered() {
-  if (!m_controlsEnabled) {
-    return;
-  }
-  auto selection = m_filterModel->mapSelectionToSource(
-      ui->modTreeView->selectionModel()->selection());
-  m_mods->setModStatus(selection.indexes(), ModFolderModel::Enable);
-}
-
-void ModFolderPage::on_actionDisable_triggered() {
-  if (!m_controlsEnabled) {
-    return;
-  }
-  auto selection = m_filterModel->mapSelectionToSource(
-      ui->modTreeView->selectionModel()->selection());
-  m_mods->setModStatus(selection.indexes(), ModFolderModel::Disable);
-}
-
-void ModFolderPage::on_actionRemove_triggered() {
-  if (!m_controlsEnabled) {
-    return;
-  }
-  auto selection = m_filterModel->mapSelectionToSource(
-      ui->modTreeView->selectionModel()->selection());
-  m_mods->deleteMods(selection.indexes());
-}
-
-void ModFolderPage::on_actionView_configs_triggered() {
-  DesktopServices::openDirectory(m_inst->instanceConfigFolder());
-}
-
-void ModFolderPage::on_actionView_Folder_triggered() {
-  DesktopServices::openDirectory(m_mods->dir().absolutePath());
-}
-
-void ModFolderPage::modCurrent(const QModelIndex &current,
-                               const QModelIndex &previous) {
-  if (!current.isValid()) {
-    ui->frame->clear();
-    return;
-  }
-  auto sourceCurrent = m_filterModel->mapToSource(current);
-  int row = sourceCurrent.row();
-  Mod &m = m_mods->operator[](row);
-  ui->frame->updateWithMod(m);
+    return profile->getComponent("net.minecraft")->getReleaseDateTime() <
+           g_VersionFilterData.legacyCutoffDate;
 }

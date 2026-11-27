@@ -4,6 +4,7 @@
 
 #include "ui/InstanceWindow.h"
 #include "ui/MainWindow.h"
+#include "ui/GuiUtil.h"
 
 #include "ui/instanceview/AccessibleInstanceView.h"
 
@@ -44,10 +45,12 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QLibraryInfo>
 #include <QList>
 #include <QNetworkAccessManager>
 #include <QPointer>
+#include <QScreen>
 #include <QStringList>
 #include <QPainter>
 #include <QStyleFactory>
@@ -858,7 +861,9 @@ Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
 
   // load translations
   {
-    m_translations.reset(new TranslationsModel("translations"));
+    const QString translationsPath =
+        QDir(QGuiApplication::applicationDirPath()).filePath("translations");
+    m_translations.reset(new TranslationsModel(translationsPath));
     auto bcp47Name = m_settings->get("Language").toString();
     m_translations->selectLanguage(bcp47Name);
     qDebug() << "Your language is" << bcp47Name;
@@ -1061,6 +1066,7 @@ bool Application::createSetupWizard() {
     if (javaRequired) {
       m_setupWizard->addPage(new JavaWizardPage(m_setupWizard));
     }
+    GuiUtil::fitWindowToAvailableScreen(m_setupWizard, QSize(615, 659));
     m_setupWizard->setWindowTitle(tr("Quick Setup"));
     connect(m_setupWizard, &QDialog::finished, this,
             &Application::setupWizardFinished);
@@ -1120,13 +1126,7 @@ void Application::performMainStartupAction() {
     }
   }
   if (!m_mainWindow) {
-    m_mainWindow = new MainWindow();
-    m_mainWindow->checkInstancePathForProblems();
-    connect(this, &Application::updateAllowedChanged, m_mainWindow,
-            &MainWindow::updatesAllowedChanged);
-    connect(m_mainWindow, &MainWindow::isClosing, this,
-            &Application::on_windowClose);
-    m_mainWindow->show();
+    showMainWindow();
   }
   if (!m_zipToImport.isEmpty()) {
     qDebug() << "<> Importing instance from zip:" << m_zipToImport;
@@ -1505,8 +1505,55 @@ MainWindow *Application::showMainWindow(bool minimized) {
     m_mainWindow = new MainWindow();
     m_mainWindow->restoreState(QByteArray::fromBase64(
         APPLICATION->settings()->get("MainWindowState").toByteArray()));
-    m_mainWindow->restoreGeometry(QByteArray::fromBase64(
-        APPLICATION->settings()->get("MainWindowGeometry").toByteArray()));
+    m_mainWindow->showInstanceView();
+    const QByteArray savedGeometry =
+        QByteArray::fromBase64(APPLICATION->settings()
+                                   ->get("MainWindowGeometry")
+                                   .toByteArray());
+    const bool restoredGeometry =
+        !savedGeometry.isEmpty() && m_mainWindow->restoreGeometry(savedGeometry);
+    QScreen *screen = m_mainWindow->screen();
+    if (!screen) {
+      screen = QGuiApplication::primaryScreen();
+    }
+    if (screen) {
+      const QRect available = screen->availableGeometry();
+      if (restoredGeometry) {
+        if (!m_mainWindow->isMaximized()) {
+          const QSize maxSize(
+              qMax(1, qMin(1280, available.width() * 75 / 100)),
+              qMax(1, qMin(800, available.height() * 75 / 100)));
+          QSize restoredSize = m_mainWindow->size().boundedTo(maxSize);
+          const int maxFourThreeWidth =
+              qMax(1, restoredSize.height() * 4 / 3);
+          if (restoredSize.width() > maxFourThreeWidth) {
+            restoredSize.setWidth(maxFourThreeWidth);
+          }
+          m_mainWindow->resize(restoredSize);
+          const int maxX = available.right() - m_mainWindow->width() + 1;
+          const int maxY = available.bottom() - m_mainWindow->height() + 1;
+          m_mainWindow->move(
+              qBound(available.left(), m_mainWindow->x(), maxX),
+              qBound(available.top(), m_mainWindow->y(), maxY));
+        }
+      } else {
+        const int defaultHeight =
+            qMax(1, qMin(800, available.height() * 75 / 100));
+        const int defaultWidth = qMax(
+            1, qMin(qMin(1280, available.width() * 75 / 100),
+                    defaultHeight * 4 / 3));
+        const QSize defaultSize(defaultWidth, defaultHeight);
+        m_mainWindow->resize(defaultSize);
+        m_mainWindow->move(available.center() -
+                           QPoint(defaultSize.width() / 2,
+                                  defaultSize.height() / 2));
+      }
+    }
+    connect(this, &Application::updateAllowedChanged, m_mainWindow,
+            &MainWindow::updatesAllowedChanged);
+    connect(m_mainWindow, &MainWindow::isClosing, this,
+            &Application::on_windowClose);
+    ++m_openWindows;
     if (minimized) {
       m_mainWindow->showMinimized();
     } else {
@@ -1514,11 +1561,6 @@ MainWindow *Application::showMainWindow(bool minimized) {
     }
 
     m_mainWindow->checkInstancePathForProblems();
-    connect(this, &Application::updateAllowedChanged, m_mainWindow,
-            &MainWindow::updatesAllowedChanged);
-    connect(m_mainWindow, &MainWindow::isClosing, this,
-            &Application::on_windowClose);
-    m_openWindows++;
   }
   return m_mainWindow;
 }
@@ -1549,18 +1591,32 @@ InstanceWindow *Application::showInstanceWindow(InstancePtr instance,
 }
 
 void Application::on_windowClose() {
-  m_openWindows--;
   auto instWindow = qobject_cast<InstanceWindow *>(QObject::sender());
   if (instWindow) {
     auto &extras = m_instanceExtras[instWindow->instanceId()];
+    if (extras.window != instWindow) {
+      qWarning() << "Ignoring duplicate close notification for instance page";
+      return;
+    }
     extras.window = nullptr;
     if (extras.controller) {
       extras.controller->setParentWidget(m_mainWindow);
     }
+    if (shouldExitNow()) {
+      exit(0);
+    }
+    return;
   }
   auto mainWindow = qobject_cast<MainWindow *>(QObject::sender());
-  if (mainWindow) {
-    m_mainWindow = nullptr;
+  if (!mainWindow || m_mainWindow != mainWindow) {
+    qWarning() << "Ignoring close notification for an untracked window";
+    return;
+  }
+  m_mainWindow = nullptr;
+  if (m_openWindows == 0) {
+    qWarning() << "Main window close received with no tracked open windows";
+  } else {
+    --m_openWindows;
   }
   // quit when there are no more windows.
   if (shouldExitNow()) {

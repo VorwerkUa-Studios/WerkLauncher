@@ -837,44 +837,16 @@ SET(LAUNCHER_SOURCES
 )
 
 qt6_wrap_ui(LAUNCHER_UI
-    ui/dialogs/AboutDialog.ui
     ui/dialogs/AccountsDialog.ui
-    ui/dialogs/CopyInstanceDialog.ui
-    ui/dialogs/CreateShortcutDialog.ui
-    ui/dialogs/ExportInstanceDialog.ui
-    ui/dialogs/IconPickerDialog.ui
-    ui/dialogs/ModrinthExportDialog.ui
-    ui/dialogs/NewComponentDialog.ui
     ui/dialogs/NewInstanceDialog.ui
     ui/dialogs/ModDownloaderDialog.ui
-    ui/dialogs/NotificationDialog.ui
-    ui/dialogs/ProfileSelectDialog.ui
-    ui/dialogs/ProgressDialog.ui
-    ui/dialogs/UpdateDialog.ui
 
-    ui/pages/global/JavaPage.ui
-    ui/pages/global/LauncherPage.ui
-    ui/pages/global/MinecraftPage.ui
-    ui/pages/instance/GameOptionsPage.ui
-    ui/pages/instance/InstanceSettingsPage.ui
-    ui/pages/instance/LegacyUpgradePage.ui
-    ui/pages/instance/LogPage.ui
-    ui/pages/instance/ModFolderPage.ui
-    ui/pages/instance/NotesPage.ui
-    ui/pages/instance/OtherLogsPage.ui
-    ui/pages/instance/ScreenshotsPage.ui
-    ui/pages/instance/ServersPage.ui
-    ui/pages/instance/VersionPage.ui
-    ui/pages/instance/WorldListPage.ui
     ui/pages/modplatform/ImportPage.ui
     ui/pages/modplatform/VanillaPage.ui
     ui/pages/modplatform/curseforge/CurseForgePage.ui
     ui/pages/modplatform/modrinth/ModrinthPage.ui
     ui/widgets/CustomCommands.ui
-    ui/widgets/CustomCommands.ui
     ui/widgets/InstanceCardWidget.ui
-    ui/widgets/InstanceCardWidget.ui
-    ui/widgets/MCModInfoFrame.ui
     ui/widgets/MCModInfoFrame.ui
 )
 

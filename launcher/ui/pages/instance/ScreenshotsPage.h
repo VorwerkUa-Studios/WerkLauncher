@@ -15,77 +15,66 @@
 
 #pragma once
 
-#include <QMainWindow>
+#include <QSet>
+#include <QVariantList>
+#include <QVariantMap>
+#include <QWidget>
 
 #include "ui/pages/BasePage.h"
 #include <Application.h>
 
-class QFileSystemModel;
-class QIdentityProxyModel;
-namespace Ui
-{
-class ScreenshotsPage;
-}
+class QFileSystemWatcher;
 
-struct ScreenShot;
-class ScreenshotList;
-class ImgurAlbumCreation;
-
-class ScreenshotsPage : public QMainWindow, public BasePage
+class ScreenshotsPage : public QWidget, public BasePage
 {
     Q_OBJECT
+    Q_PROPERTY(QString pageTitle READ displayName CONSTANT)
+    Q_PROPERTY(QVariantList screenshots READ screenshots NOTIFY screenshotsChanged)
+    Q_PROPERTY(QVariantMap actionStates READ actionStates NOTIFY actionStatesChanged)
+    Q_PROPERTY(int selectedCount READ selectedCount NOTIFY selectionChanged)
 
 public:
-    explicit ScreenshotsPage(QString path, QWidget *parent = 0);
-    virtual ~ScreenshotsPage();
+    explicit ScreenshotsPage(QString path, QWidget *parent = nullptr);
+    ~ScreenshotsPage() override;
 
-    virtual void openedImpl() override;
+    void openedImpl() override;
+    void closedImpl() override;
+    QString displayName() const override { return tr("Screenshots"); }
+    QIcon icon() const override { return APPLICATION->getThemedIcon("screenshots"); }
+    QString id() const override { return QStringLiteral("screenshots"); }
+    QString helpPage() const override { return QStringLiteral("Screenshots-management"); }
+    bool apply() override { return !m_uploadActive; }
 
-    enum
-    {
-        NothingDone = 0x42
-    };
+    QVariantList screenshots() const;
+    QVariantMap actionStates() const;
+    int selectedCount() const { return m_selectedPaths.size(); }
 
-    virtual bool eventFilter(QObject *, QEvent *) override;
-    virtual QString displayName() const override
-    {
-        return tr("Screenshots");
-    }
-    virtual QIcon icon() const override
-    {
-        return APPLICATION->getThemedIcon("screenshots");
-    }
-    virtual QString id() const override
-    {
-        return "screenshots";
-    }
-    virtual QString helpPage() const override
-    {
-        return "Screenshots-management";
-    }
-    virtual bool apply() override
-    {
-        return !m_uploadActive;
-    }
+    Q_INVOKABLE void selectScreenshot(const QString &path, int modifiers);
+    Q_INVOKABLE void openScreenshot(const QString &path);
+    Q_INVOKABLE void triggerAction(const QString &actionName);
 
-protected:
-    QMenu * createPopupMenu() override;
+signals:
+    void screenshotsChanged();
+    void selectionChanged();
+    void actionStatesChanged();
 
 private slots:
-    void on_actionUpload_triggered();
-    void on_actionCopy_Image_triggered();
-    void on_actionCopy_File_s_triggered();
-    void on_actionDelete_triggered();
-    void on_actionRename_triggered();
-    void on_actionView_Folder_triggered();
-    void onItemActivated(QModelIndex);
-    void ShowContextMenu(const QPoint &pos);
+    void directoryChanged(const QString &path);
 
 private:
-    Ui::ScreenshotsPage *ui;
-    std::shared_ptr<QFileSystemModel> m_model;
-    std::shared_ptr<QIdentityProxyModel> m_filterModel;
+    void refreshScreenshots();
+    void uploadSelected();
+    void copyImage();
+    void copyFiles();
+    void deleteSelected();
+    void renameSelected();
+    void openFolder();
+
     QString m_folder;
+    QFileSystemWatcher *m_watcher = nullptr;
+    QSet<QString> m_selectedPaths;
+    QString m_currentPath;
+    QString m_selectionAnchorPath;
     bool m_valid = false;
     bool m_uploadActive = false;
 };

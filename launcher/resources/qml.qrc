@@ -2,5 +2,35 @@
     <qresource prefix="/qml">
         <file alias="Main.qml">../ui/qml/Main.qml</file>
         <file alias="InstanceCard.qml">../ui/qml/InstanceCard.qml</file>
+        <file alias="InstanceJavaPage.qml">../ui/qml/InstanceJavaPage.qml</file>
+        <file alias="InstanceSettings.qml">../ui/qml/InstanceSettings.qml</file>
+        <file alias="JavaPage.qml">../ui/qml/JavaPage.qml</file>
+        <file alias="LanguagePage.qml">../ui/qml/LanguagePage.qml</file>
+        <file alias="LauncherPage.qml">../ui/qml/LauncherPage.qml</file>
+        <file alias="MinecraftPage.qml">../ui/qml/MinecraftPage.qml</file>
+        <file alias="LegacyUpgradePage.qml">../ui/qml/LegacyUpgradePage.qml</file>
+        <file alias="LogPage.qml">../ui/qml/LogPage.qml</file>
+        <file alias="AboutDialog.qml">../ui/qml/AboutDialog.qml</file>
+        <file alias="CopyInstanceDialog.qml">../ui/qml/CopyInstanceDialog.qml</file>
+        <file alias="CreateShortcutDialog.qml">../ui/qml/CreateShortcutDialog.qml</file>
+        <file alias="GameOptionsPage.qml">../ui/qml/GameOptionsPage.qml</file>
+        <file alias="GroupInputDialog.qml">../ui/qml/GroupInputDialog.qml</file>
+        <file alias="IconPickerDialog.qml">../ui/qml/IconPickerDialog.qml</file>
+        <file alias="ModFolderPage.qml">../ui/qml/ModFolderPage.qml</file>
+        <file alias="ModrinthExportDialog.qml">../ui/qml/ModrinthExportDialog.qml</file>
+        <file alias="NotesPage.qml">../ui/qml/NotesPage.qml</file>
+        <file alias="NewComponentDialog.qml">../ui/qml/NewComponentDialog.qml</file>
+        <file alias="NotificationDialog.qml">../ui/qml/NotificationDialog.qml</file>
+        <file alias="OfflineNameDialog.qml">../ui/qml/OfflineNameDialog.qml</file>
+        <file alias="OtherLogsPage.qml">../ui/qml/OtherLogsPage.qml</file>
+        <file alias="ProfileSelectDialog.qml">../ui/qml/ProfileSelectDialog.qml</file>
+        <file alias="ProgressDialog.qml">../ui/qml/ProgressDialog.qml</file>
+        <file alias="ScreenshotsPage.qml">../ui/qml/ScreenshotsPage.qml</file>
+        <file alias="Sidebar.qml">../ui/qml/Sidebar.qml</file>
+        <file alias="ServersPage.qml">../ui/qml/ServersPage.qml</file>
+        <file alias="ToolbarButton.qml">../ui/qml/ToolbarButton.qml</file>
+        <file alias="UpdateDialog.qml">../ui/qml/UpdateDialog.qml</file>
+        <file alias="VersionPage.qml">../ui/qml/VersionPage.qml</file>
+        <file alias="WorldListPage.qml">../ui/qml/WorldListPage.qml</file>
     </qresource>
 </RCC>

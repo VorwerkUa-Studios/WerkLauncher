@@ -1,37 +1,81 @@
 #include "GameOptionsPage.h"
-#include "ui_GameOptionsPage.h"
+
+#include <QLabel>
+#include <QQuickWidget>
+#include <QStackedLayout>
+#include <QUrl>
+#include <QVariant>
+#include <QVariantMap>
+
 #include "minecraft/MinecraftInstance.h"
 #include "minecraft/gameoptions/GameOptions.h"
 
-GameOptionsPage::GameOptionsPage(MinecraftInstance * inst, QWidget* parent)
-    : QWidget(parent), ui(new Ui::GameOptionsPage)
+GameOptionsPage::GameOptionsPage(MinecraftInstance *inst, QWidget *parent)
+    : QWidget(parent), m_model(inst->gameOptionsModel())
 {
-    ui->setupUi(this);
-    ui->tabWidget->tabBar()->hide();
-    m_model = inst->gameOptionsModel();
-    ui->optionsView->setModel(m_model.get());
-    auto head = ui->optionsView->header();
-    if(head->count())
-    {
-        head->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-        for(int i = 1; i < head->count(); i++)
-        {
-            head->setSectionResizeMode(i, QHeaderView::Stretch);
+    auto *stack = new QStackedLayout(this);
+    stack->setContentsMargins(0, 0, 0, 0);
+
+    auto *qmlWidget = new QQuickWidget(this);
+    qmlWidget->setObjectName(QStringLiteral("gameOptionsPageQml"));
+    qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+    qmlWidget->setInitialProperties(
+        {{QStringLiteral("pageController"),
+          QVariant::fromValue(static_cast<QObject *>(this))}});
+    stack->addWidget(qmlWidget);
+    stack->setCurrentWidget(qmlWidget);
+
+    auto *errorLabel =
+        new QLabel(tr("The game options page could not be loaded."), this);
+    errorLabel->setAlignment(Qt::AlignCenter);
+    errorLabel->setWordWrap(true);
+    stack->addWidget(errorLabel);
+
+    const auto showLoadError = [qmlWidget, stack, errorLabel]() {
+        QStringList details;
+        for (const auto &error : qmlWidget->errors()) {
+            details.append(error.toString());
         }
+        if (details.isEmpty()) {
+            details.append(QObject::tr("No QML diagnostic was provided."));
+        }
+        qCritical() << "Game options page QML failed to load:"
+                    << details.join('\n');
+        errorLabel->setToolTip(details.join('\n'));
+        stack->setCurrentWidget(errorLabel);
+    };
+    connect(qmlWidget, &QQuickWidget::statusChanged, this,
+            [qmlWidget, showLoadError](QQuickWidget::Status status) {
+                if (status == QQuickWidget::Error ||
+                    (status == QQuickWidget::Ready && !qmlWidget->rootObject())) {
+                    showLoadError();
+                }
+            });
+    qmlWidget->setSource(QUrl(QStringLiteral("qrc:/qml/GameOptionsPage.qml")));
+    if (qmlWidget->status() == QQuickWidget::Error ||
+        (qmlWidget->status() == QQuickWidget::Ready && !qmlWidget->rootObject())) {
+        showLoadError();
     }
 }
 
-GameOptionsPage::~GameOptionsPage()
-{
-    // m_model->save();
-}
+GameOptionsPage::~GameOptionsPage() = default;
 
-void GameOptionsPage::openedImpl()
+QVariantList GameOptionsPage::options() const
 {
-    // m_model->observe();
-}
-
-void GameOptionsPage::closedImpl()
-{
-    // m_model->unobserve();
+    QVariantList result;
+    if (!m_model) {
+        return result;
+    }
+    result.reserve(m_model->rowCount());
+    for (int row = 0; row < m_model->rowCount(); ++row) {
+        QVariantMap option;
+        option.insert(
+            QStringLiteral("key"),
+            m_model->data(m_model->index(row, 0), Qt::DisplayRole).toString());
+        option.insert(
+            QStringLiteral("value"),
+            m_model->data(m_model->index(row, 1), Qt::DisplayRole).toString());
+        result.append(option);
+    }
+    return result;
 }

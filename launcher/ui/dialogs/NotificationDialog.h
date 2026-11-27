@@ -1,44 +1,44 @@
-#ifndef NOTIFICATIONDIALOG_H
-#define NOTIFICATIONDIALOG_H
+#pragma once
 
 #include <QDialog>
-
+#include <QString>
 #include "notifications/NotificationChecker.h"
-
-namespace Ui {
-class NotificationDialog;
-}
 
 class NotificationDialog : public QDialog
 {
     Q_OBJECT
+    Q_PROPERTY(QString message READ message CONSTANT)
+    Q_PROPERTY(QString notificationType READ notificationType CONSTANT)
+    Q_PROPERTY(int closeCountdown READ closeCountdown NOTIFY countdownChanged)
+    Q_PROPERTY(int dontShowAgainCountdown READ dontShowAgainCountdown NOTIFY countdownChanged)
 
 public:
-    explicit NotificationDialog(const NotificationChecker::NotificationEntry &entry, QWidget *parent = 0);
-    ~NotificationDialog();
-
     enum ExitCode
     {
         Normal,
         DontShowAgain
     };
 
+    explicit NotificationDialog(const NotificationChecker::NotificationEntry &entry, QWidget *parent = nullptr);
+    ~NotificationDialog() override;
+
+    QString message() const { return m_message; }
+    QString notificationType() const { return m_type; }
+    int closeCountdown() const { return m_closeTime; }
+    int dontShowAgainCountdown() const { return m_dontShowAgainTime; }
+
+    Q_INVOKABLE void dismiss();
+    Q_INVOKABLE void dontShowAgain();
+
+signals:
+    void countdownChanged();
+
 protected:
-    void timerEvent(QTimerEvent *event);
+    void timerEvent(QTimerEvent *event) override;
 
 private:
-    Ui::NotificationDialog *ui;
-
+    QString m_message;
+    QString m_type;
     int m_dontShowAgainTime = 10;
     int m_closeTime = 5;
-
-    QString m_dontShowAgainText;
-    QString m_closeText;
-
-private
-slots:
-    void on_dontShowAgainBtn_clicked();
-    void on_closeBtn_clicked();
 };
-
-#endif // NOTIFICATIONDIALOG_H

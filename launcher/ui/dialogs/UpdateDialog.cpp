@@ -1,176 +1,147 @@
 #include "UpdateDialog.h"
-#include "Application.h"
-#include "ui/widgets/CustomTitleBar.h"
-#include "ui_UpdateDialog.h"
-#include <Json.h>
-#include <QDebug>
-#include <settings/SettingsObject.h>
 
+#include <QDebug>
+#include <QLabel>
+#include <QQuickWidget>
+#include <QRegularExpression>
+#include <QUrl>
+#include <QVBoxLayout>
+
+#include "Application.h"
 #include "BuildConfig.h"
 #include "HoeDown.h"
+#include "Json.h"
+#include "settings/SettingsObject.h"
+#include "ui/GuiUtil.h"
+#include "ui/widgets/CustomTitleBar.h"
 
-UpdateDialog::UpdateDialog(bool hasUpdate, QWidget *parent)
-    : QDialog(parent), ui(new Ui::UpdateDialog) {
-  setWindowFlags(Qt::FramelessWindowHint | windowFlags());
-  ui->setupUi(this);
-
-  auto titleBar = new CustomTitleBar(this);
-  titleBar->setTitle(tr("Update"));
-  ui->verticalLayout->setContentsMargins(0, 0, 0, 0);
-  ui->verticalLayout->setSpacing(0);
-  ui->verticalLayout->insertWidget(0, titleBar);
-  if (hasUpdate) {
-    ui->label->setText(tr("A new update is available!"));
-  } else {
-    ui->label->setText(
-        tr("No updates found. You are running the latest version."));
-    ui->btnUpdateNow->setHidden(true);
-    ui->btnUpdateLater->setText(tr("Close"));
-  }
-  ui->changelogBrowser->setHtml(
-      tr("<center><h1>Loading changelog...</h1></center>"));
-  loadChangelog();
-  restoreGeometry(QByteArray::fromBase64(
-      APPLICATION->settings()->get("UpdateDialogGeometry").toByteArray()));
-}
-
-UpdateDialog::~UpdateDialog() {}
-
-void UpdateDialog::loadChangelog() {
-  dljob = new NetJob("Changelog", APPLICATION->network());
-  QString url;
-  url =
-      QString(
-          "https://api.github.com/repos/MultiMC/Launcher/compare/%1...develop")
-          .arg(BuildConfig.GIT_COMMIT);
-  m_changelogType = CHANGELOG_COMMITS;
-  dljob->addNetAction(Net::Download::makeByteArray(QUrl(url), &changelogData));
-  connect(dljob.get(), &NetJob::succeeded, this,
-          &UpdateDialog::changelogLoaded);
-  connect(dljob.get(), &NetJob::failed, this, &UpdateDialog::changelogFailed);
-  dljob->start();
-}
-
-#include <QRegularExpression>
-
-QString reprocessMarkdown(QByteArray markdown) {
-  HoeDown hoedown;
-  QString output = hoedown.process(markdown);
-
-  // HACK: easier than customizing hoedown
-  output.replace(
-      QRegularExpression("GH-([0-9]+)"),
-      "<a href=\"https://github.com/MultiMC/Launcher/issues/\\1\">GH-\\1</a>");
-  qDebug() << output;
-  return output;
-}
-
+namespace {
 QString reprocessCommits(QByteArray json) {
   try {
     QString result;
     auto document = Json::requireDocument(json);
     auto rootobject = Json::requireObject(document);
-    auto status = Json::requireString(rootobject, "status");
-    auto diff_url = Json::requireString(rootobject, "html_url");
-
-    auto print_commits = [&]() {
-      result += "<table cellspacing=0 cellpadding=2 style='border-width: 1px; "
-                "border-style: solid'>";
-      auto commitarray = Json::requireArray(rootobject, "commits");
-      for (int i = commitarray.size() - 1; i >= 0; i--) {
-        const auto &commitval = commitarray[i];
-        auto commitobj = Json::requireValueObject(commitval);
-        auto parents_info = Json::ensureArray(commitobj, "parents");
-        // NOTE: this ignores merge commits, because they have more than one
-        // parent
-        if (parents_info.size() > 1) {
-          continue;
-        }
-        auto commit_url = Json::requireString(commitobj, "html_url");
-        auto commit_info = Json::requireObject(commitobj, "commit");
-        auto commit_message = Json::requireString(commit_info, "message");
-        auto lines = commit_message.split('\n');
-        QRegularExpression regexp("(?<prefix>(GH-(?<issuenr>[0-9]+))|(NOISSUE)|"
-                                  "(SCRATCH))? *(?<rest>.*) *");
-        auto match =
-            regexp.match(lines.takeFirst(), 0, QRegularExpression::NormalMatch);
-        auto issuenr = match.captured("issuenr");
-        auto prefix = match.captured("prefix");
-        auto rest = match.captured("rest");
-        result += "<tr><td>";
-        if (issuenr.length()) {
-          result += QString("<a "
-                            "href=\"https://github.com/MultiMC/Launcher/issues/"
-                            "%1\">GH-%2</a>")
-                        .arg(issuenr, issuenr);
-        } else if (prefix.length()) {
-          result += QString("<a href=\"%1\">%2</a>").arg(commit_url, prefix);
-        } else {
-          result += QString("<a href=\"%1\">NOISSUE</a>").arg(commit_url);
-        }
-        result += "</td>";
-        lines.prepend(rest);
-        result += "<td><p>" + lines.join("<br />") + "</p></td></tr>";
+    auto commitarray = Json::requireArray(rootobject, "commits");
+    result += "<table cellspacing=0 cellpadding=2 style='border-width: 1px; border-style: solid'>";
+    for (int i = commitarray.size() - 1; i >= 0; i--) {
+      const auto &commitval = commitarray[i];
+      auto commitobj = Json::requireValueObject(commitval);
+      auto parents_info = Json::ensureArray(commitobj, "parents");
+      if (parents_info.size() > 1) {
+        continue;
       }
-      result += "</table>";
-    };
+      auto commit_url = Json::requireString(commitobj, "html_url");
+      auto commit_info = Json::requireObject(commitobj, "commit");
+      auto commit_message = Json::requireString(commit_info, "message");
+      auto lines = commit_message.split('\n');
+      QRegularExpression regexp("(?<prefix>(GH-(?<issuenr>[0-9]+))|(NOISSUE)|(SCRATCH))? *(?<rest>.*) *");
+      auto match = regexp.match(lines.takeFirst(), 0, QRegularExpression::NormalMatch);
+      auto issuenr = match.captured("issuenr");
+      auto rest = match.captured("rest");
 
-    if (status == "identical") {
-      return QObject::tr("<p>There are no code changes between your current "
-                         "version and the latest.</p>");
-    } else if (status == "ahead") {
-      result +=
-          QObject::tr("<p>Following commits were added since last update:</p>");
-      print_commits();
-    } else if (status == "diverged") {
-      auto commit_ahead = Json::requireInteger(rootobject, "ahead_by");
-      auto commit_behind = Json::requireInteger(rootobject, "behind_by");
-      result +=
-          QObject::tr(
-              "<p>The update removes %1 commits and adds the following %2:</p>")
-              .arg(commit_behind)
-              .arg(commit_ahead);
-      print_commits();
+      result += "<tr>";
+      result += "<td valign=top>";
+      if (!issuenr.isEmpty()) {
+        result += QString("<a href=\"https://github.com/MultiMC/Launcher/issues/%1\">GH-%1</a>").arg(issuenr);
+      }
+      result += "</td>";
+      result += "<td>";
+      result += QString("<a href=\"%1\">%2</a>").arg(commit_url, rest.toHtmlEscaped());
+      result += "</td>";
+      result += "</tr>";
     }
-    result +=
-        QObject::tr(
-            "<p>You can <a href=\"%1\">look at the changes on github</a>.</p>")
-            .arg(diff_url);
+    result += "</table>";
     return result;
   } catch (const JSONValidationError &e) {
-    qWarning() << "Got an unparseable commit log from github:" << e.what();
-    qDebug() << json;
+    qCritical() << "Failed to parse update changelog JSON:" << e.cause();
+    return QString();
   }
-  return QString();
+}
+} // namespace
+
+UpdateDialog::UpdateDialog(bool hasUpdate, QWidget *parent)
+    : QDialog(parent), m_hasUpdate(hasUpdate) {
+  setWindowFlags(Qt::FramelessWindowHint | windowFlags());
+  setWindowTitle(tr("Update"));
+  resize(560, 520);
+
+  auto *mainLayout = new QVBoxLayout(this);
+  mainLayout->setContentsMargins(0, 0, 0, 0);
+  mainLayout->setSpacing(0);
+
+  auto *titleBar = new CustomTitleBar(this);
+  titleBar->setTitle(tr("Update"));
+  mainLayout->addWidget(titleBar);
+
+  m_changelogHtml = tr("<center><h3>Loading changelog...</h3></center>");
+
+  auto *qmlWidget = new QQuickWidget(this);
+  qmlWidget->setObjectName(QStringLiteral("updateDialogQml"));
+  qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+  qmlWidget->setInitialProperties(
+      {{QStringLiteral("dialogController"),
+        QVariant::fromValue(static_cast<QObject *>(this))}});
+
+  connect(qmlWidget, &QQuickWidget::statusChanged, this,
+          [qmlWidget](QQuickWidget::Status status) {
+            if (status == QQuickWidget::Error) {
+              for (const auto &err : qmlWidget->errors()) {
+                qCritical() << "UpdateDialog QML error:" << err.toString();
+              }
+            }
+          });
+
+  qmlWidget->setSource(QUrl(QStringLiteral("qrc:/qml/UpdateDialog.qml")));
+  mainLayout->addWidget(qmlWidget);
+
+  loadChangelog();
+  GuiUtil::fitWindowToAvailableScreen(this, size());
+}
+
+UpdateDialog::~UpdateDialog() = default;
+
+QString UpdateDialog::headerText() const {
+  if (m_hasUpdate) {
+    return tr("A new update for %1 is available!").arg(BuildConfig.LAUNCHER_DISPLAYNAME);
+  }
+  return tr("No update found. You are running the latest version.");
+}
+
+void UpdateDialog::loadChangelog() {
+  dljob = new NetJob("Changelog", APPLICATION->network());
+  QString url = QString("https://api.github.com/repos/MultiMC/Launcher/compare/%1...develop").arg(BuildConfig.GIT_COMMIT);
+  m_changelogType = CHANGELOG_COMMITS;
+  dljob->addNetAction(Net::Download::makeByteArray(QUrl(url), &changelogData));
+  connect(dljob.get(), &NetJob::succeeded, this, &UpdateDialog::changelogLoaded);
+  connect(dljob.get(), &NetJob::failed, this, &UpdateDialog::changelogFailed);
+  dljob->start();
 }
 
 void UpdateDialog::changelogLoaded() {
-  QString result;
-  switch (m_changelogType) {
-  case CHANGELOG_COMMITS:
-    result = reprocessCommits(changelogData);
-    break;
-  case CHANGELOG_MARKDOWN:
-    result = reprocessMarkdown(changelogData);
-    break;
+  QString result = reprocessCommits(changelogData);
+  if (result.isEmpty()) {
+    result = tr("<center><h3>No commits found.</h3></center>");
   }
-  changelogData.clear();
-  ui->changelogBrowser->setHtml(result);
+  m_changelogHtml = result;
+  emit changelogHtmlChanged();
+  dljob.reset();
 }
 
 void UpdateDialog::changelogFailed(QString reason) {
-  ui->changelogBrowser->setHtml(
-      tr("<p align=\"center\" <span style=\"font-size:22pt;\">Failed to fetch "
-         "changelog... Error: %1</span></p>")
-          .arg(reason));
+  m_changelogHtml = tr("<center><h3>Failed to load changelog: %1</h3></center>").arg(reason);
+  emit changelogHtmlChanged();
+  dljob.reset();
 }
 
-void UpdateDialog::on_btnUpdateLater_clicked() { reject(); }
+void UpdateDialog::updateNow() {
+  done(UPDATE_NOW);
+}
 
-void UpdateDialog::on_btnUpdateNow_clicked() { done(UPDATE_NOW); }
+void UpdateDialog::updateLater() {
+  done(UPDATE_LATER);
+}
 
-void UpdateDialog::closeEvent(QCloseEvent *evt) {
-  APPLICATION->settings()->set("UpdateDialogGeometry",
-                               saveGeometry().toBase64());
-  QDialog::closeEvent(evt);
+void UpdateDialog::closeEvent(QCloseEvent *event) {
+  APPLICATION->settings()->set("UpdateDialogGeometry", saveGeometry().toBase64());
+  QDialog::closeEvent(event);
 }

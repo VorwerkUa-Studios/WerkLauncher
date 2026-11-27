@@ -1,88 +1,74 @@
-/* Copyright 2013-2021 MultiMC Contributors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 #include "ProgressDialog.h"
-#include "ui/widgets/CustomTitleBar.h"
-#include "ui_ProgressDialog.h"
 
 #include <QDebug>
 #include <QKeyEvent>
-
-#ifdef Q_OS_WIN
-#include <windows.h>
-#include <dwmapi.h>
-#pragma comment(lib, "dwmapi.lib")
-#endif
+#include <QLabel>
+#include <QQuickWidget>
+#include <QUrl>
+#include <QVBoxLayout>
 
 #include "tasks/Task.h"
+#include "ui/GuiUtil.h"
+#include "ui/widgets/CustomTitleBar.h"
 
 ProgressDialog::ProgressDialog(QWidget *parent)
-    : QDialog(parent), ui(new Ui::ProgressDialog) {
+    : QDialog(parent) {
   setWindowFlags(Qt::FramelessWindowHint | windowFlags());
-  ui->setupUi(this);
+  setWindowTitle(tr("Progress"));
+  resize(480, 160);
 
-#ifdef Q_OS_WIN
-  // Enable DWM shadow without adding WS_THICKFRAME (which causes visible
-  // accent-colored border on Windows 11). Minimal bottom margin triggers
-  // DWM to render the drop shadow.
-  HWND hwnd = (HWND)winId();
-  MARGINS margins = {0, 0, 0, 1};
-  DwmExtendFrameIntoClientArea(hwnd, &margins);
-#endif
+  auto *mainLayout = new QVBoxLayout(this);
+  mainLayout->setContentsMargins(0, 0, 0, 0);
+  mainLayout->setSpacing(0);
 
-  auto titleBar = new CustomTitleBar(this);
+  auto *titleBar = new CustomTitleBar(this);
   titleBar->setTitle(tr("Progress"));
-  ui->gridLayout->setContentsMargins(0, 0, 0, 0);
-  ui->gridLayout->setSpacing(0);
-  // move others down
-  ui->gridLayout->removeWidget(ui->statusLabel);
-  ui->gridLayout->addWidget(ui->statusLabel, 1, 0);
-  ui->gridLayout->removeWidget(ui->taskProgressBar);
-  ui->gridLayout->addWidget(ui->taskProgressBar, 2, 0);
-  ui->gridLayout->removeWidget(ui->skipButton);
-  ui->gridLayout->addWidget(ui->skipButton, 3, 0);
-  ui->gridLayout->addWidget(titleBar, 0, 0);
+  mainLayout->addWidget(titleBar);
+
+  auto *qmlWidget = new QQuickWidget(this);
+  qmlWidget->setObjectName(QStringLiteral("progressDialogQml"));
+  qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+  qmlWidget->setInitialProperties(
+      {{QStringLiteral("dialogController"),
+        QVariant::fromValue(static_cast<QObject *>(this))}});
+
+  connect(qmlWidget, &QQuickWidget::statusChanged, this,
+          [qmlWidget](QQuickWidget::Status status) {
+            if (status == QQuickWidget::Error) {
+              for (const auto &err : qmlWidget->errors()) {
+                qCritical() << "ProgressDialog QML error:" << err.toString();
+              }
+            }
+          });
+
+  qmlWidget->setSource(QUrl(QStringLiteral("qrc:/qml/ProgressDialog.qml")));
+  mainLayout->addWidget(qmlWidget);
 
   setSkipButton(false);
   changeProgress(0, 100);
+  GuiUtil::fitWindowToAvailableScreen(this, size());
 }
 
-void ProgressDialog::setSkipButton(bool present, QString label) {
-  ui->skipButton->setAutoDefault(false);
-  ui->skipButton->setDefault(false);
-  ui->skipButton->setFocusPolicy(Qt::ClickFocus);
-  ui->skipButton->setEnabled(present);
-  ui->skipButton->setVisible(present);
-  ui->skipButton->setText(label);
-  updateSize();
-}
-
-void ProgressDialog::on_skipButton_clicked(bool checked) {
-  Q_UNUSED(checked);
-  task->abort();
-}
-
-ProgressDialog::~ProgressDialog() { delete ui; }
+ProgressDialog::~ProgressDialog() = default;
 
 void ProgressDialog::updateSize() {
   setFixedWidth(480);
-  adjustSize();
 }
 
-int ProgressDialog::execWithTask(Task *task) {
-  this->task = task;
+void ProgressDialog::setSkipButton(bool present, QString label) {
+  m_skipButtonVisible = present;
+  m_skipButtonLabel = label;
+  emit skipButtonChanged();
+}
+
+void ProgressDialog::abortTask() {
+  if (task && task->isRunning()) {
+    task->abort();
+  }
+}
+
+int ProgressDialog::execWithTask(Task *t) {
+  this->task = t;
   QDialog::DialogCode result;
 
   if (!task) {
@@ -94,15 +80,12 @@ int ProgressDialog::execWithTask(Task *task) {
     return result;
   }
 
-  // Connect signals.
   connect(task, SIGNAL(started()), SLOT(onTaskStarted()));
   connect(task, SIGNAL(failed(QString)), SLOT(onTaskFailed(QString)));
   connect(task, SIGNAL(succeeded()), SLOT(onTaskSucceeded()));
   connect(task, SIGNAL(status(QString)), SLOT(changeStatus(const QString &)));
-  connect(task, SIGNAL(progress(qint64, qint64)),
-          SLOT(changeProgress(qint64, qint64)));
+  connect(task, SIGNAL(progress(qint64, qint64)), SLOT(changeProgress(qint64, qint64)));
 
-  // if this didn't connect to an already running task, invoke start
   if (!task->isRunning()) {
     task->start();
   }
@@ -117,14 +100,14 @@ int ProgressDialog::execWithTask(Task *task) {
   }
 }
 
-// TODO: only provide the unique_ptr overloads
-int ProgressDialog::execWithTask(std::unique_ptr<Task> &&task) {
-  connect(this, &ProgressDialog::destroyed, task.get(), &Task::deleteLater);
-  return execWithTask(task.release());
+int ProgressDialog::execWithTask(std::unique_ptr<Task> &&t) {
+  connect(this, &ProgressDialog::destroyed, t.get(), &Task::deleteLater);
+  return execWithTask(t.release());
 }
-int ProgressDialog::execWithTask(std::unique_ptr<Task> &task) {
-  connect(this, &ProgressDialog::destroyed, task.get(), &Task::deleteLater);
-  return execWithTask(task.release());
+
+int ProgressDialog::execWithTask(std::unique_ptr<Task> &t) {
+  connect(this, &ProgressDialog::destroyed, t.get(), &Task::deleteLater);
+  return execWithTask(t.release());
 }
 
 bool ProgressDialog::handleImmediateResult(QDialog::DialogCode &result) {
@@ -139,34 +122,35 @@ bool ProgressDialog::handleImmediateResult(QDialog::DialogCode &result) {
   return false;
 }
 
-Task *ProgressDialog::getTask() { return task; }
+Task *ProgressDialog::getTask() {
+  return task;
+}
 
 void ProgressDialog::onTaskStarted() {}
 
-void ProgressDialog::onTaskFailed(QString failure) { reject(); }
+void ProgressDialog::onTaskFailed(QString failure) {
+  reject();
+}
 
-void ProgressDialog::onTaskSucceeded() { accept(); }
+void ProgressDialog::onTaskSucceeded() {
+  accept();
+}
 
 void ProgressDialog::changeStatus(const QString &status) {
-  ui->statusLabel->setText(status);
-  updateSize();
+  m_statusText = status;
+  emit statusTextChanged();
 }
 
 void ProgressDialog::changeProgress(qint64 current, qint64 total) {
-  ui->taskProgressBar->setMaximum(total);
-  ui->taskProgressBar->setValue(current);
+  m_progressValue = static_cast<int>(current);
+  m_progressMaximum = static_cast<int>(total);
+  emit progressChanged();
 }
 
 void ProgressDialog::keyPressEvent(QKeyEvent *e) {
-  if (ui->skipButton->isVisible()) {
+  if (m_skipButtonVisible) {
     if (e->key() == Qt::Key_Escape) {
-      on_skipButton_clicked(true);
-      return;
-    } else if (e->key() == Qt::Key_Tab) {
-      ui->skipButton->setFocusPolicy(Qt::StrongFocus);
-      ui->skipButton->setFocus();
-      ui->skipButton->setAutoDefault(true);
-      ui->skipButton->setDefault(true);
+      abortTask();
       return;
     }
   }

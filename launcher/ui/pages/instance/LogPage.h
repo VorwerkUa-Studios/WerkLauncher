@@ -15,6 +15,8 @@
 
 #pragma once
 
+#include <QAbstractItemModel>
+#include <QFont>
 #include <QWidget>
 
 #include "BaseInstance.h"
@@ -22,20 +24,20 @@
 #include "ui/pages/BasePage.h"
 #include <Application.h>
 
-namespace Ui
-{
-class LogPage;
-}
-class QTextCharFormat;
 class LogFormatProxyModel;
 
 class LogPage : public QWidget, public BasePage
 {
     Q_OBJECT
+    Q_PROPERTY(QAbstractItemModel *logModel READ logModel CONSTANT)
+    Q_PROPERTY(bool hasLogModel READ hasLogModel NOTIFY controlsChanged)
+    Q_PROPERTY(bool tracking READ tracking WRITE setTracking NOTIFY controlsChanged)
+    Q_PROPERTY(bool wrapLines READ wrapLines WRITE setWrapLines NOTIFY controlsChanged)
+    Q_PROPERTY(int foundRow READ foundRow NOTIFY foundRowChanged)
 
 public:
     explicit LogPage(InstancePtr instance, QWidget *parent = 0);
-    virtual ~LogPage();
+    ~LogPage() override;
     virtual QString displayName() const override
     {
         return tr("Minecraft Log");
@@ -55,32 +57,35 @@ public:
     }
     virtual bool shouldDisplay() const override;
 
+    QAbstractItemModel *logModel() const;
+    bool hasLogModel() const;
+    bool tracking() const { return m_tracking; }
+    void setTracking(bool tracking);
+    bool wrapLines() const { return m_wrapLines; }
+    void setWrapLines(bool wrap);
+    int foundRow() const { return m_foundRow; }
+
+    Q_INVOKABLE void copyLog();
+    Q_INVOKABLE void uploadLog();
+    Q_INVOKABLE void clearLog();
+    Q_INVOKABLE int findNext(const QString &text, bool reverse);
+
+signals:
+    void controlsChanged();
+    void foundRowChanged();
+
 private slots:
-    void on_btnPaste_clicked();
-    void on_btnCopy_clicked();
-    void on_btnClear_clicked();
-    void on_btnBottom_clicked();
-
-    void on_trackLogCheckbox_clicked(bool checked);
-    void on_wrapCheckbox_clicked(bool checked);
-
-    void on_findButton_clicked();
-    void findActivated();
-    void findNextActivated();
-    void findPreviousActivated();
-
     void onInstanceLaunchTaskChanged(shared_qobject_ptr<LaunchTask> proc);
 
 private:
-    void modelStateToUI();
-    void UIToModelState();
     void setInstanceLaunchTaskChanged(shared_qobject_ptr<LaunchTask> proc, bool initial);
 
 private:
-    Ui::LogPage *ui;
     InstancePtr m_instance;
     shared_qobject_ptr<LaunchTask> m_process;
-
     LogFormatProxyModel * m_proxy;
     shared_qobject_ptr <LogModel> m_model;
+    bool m_tracking = true;
+    bool m_wrapLines = true;
+    int m_foundRow = -1;
 };

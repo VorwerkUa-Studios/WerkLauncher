@@ -1,27 +1,8 @@
-/* Copyright 2013-2021 MultiMC Contributors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 #pragma once
 
 #include <QDialog>
+#include <QString>
 #include "net/NetJob.h"
-
-namespace Ui
-{
-class UpdateDialog;
-}
 
 enum UpdateAction
 {
@@ -38,30 +19,36 @@ enum ChangelogType
 class UpdateDialog : public QDialog
 {
     Q_OBJECT
+    Q_PROPERTY(bool hasUpdate READ hasUpdate CONSTANT)
+    Q_PROPERTY(QString headerText READ headerText CONSTANT)
+    Q_PROPERTY(QString changelogHtml READ changelogHtml NOTIFY changelogHtmlChanged)
 
 public:
-    explicit UpdateDialog(bool hasUpdate = true, QWidget *parent = 0);
-    ~UpdateDialog();
+    explicit UpdateDialog(bool hasUpdate = true, QWidget *parent = nullptr);
+    ~UpdateDialog() override;
+
+    bool hasUpdate() const { return m_hasUpdate; }
+    QString headerText() const;
+    QString changelogHtml() const { return m_changelogHtml; }
+
+    Q_INVOKABLE void updateNow();
+    Q_INVOKABLE void updateLater();
+
+signals:
+    void changelogHtmlChanged();
 
 public slots:
-    void on_btnUpdateNow_clicked();
-    void on_btnUpdateLater_clicked();
-
-    /// Starts loading the changelog
     void loadChangelog();
-
-    /// Slot for when the chengelog loads successfully.
     void changelogLoaded();
-
-    /// Slot for when the chengelog fails to load...
     void changelogFailed(QString reason);
 
 protected:
-    void closeEvent(QCloseEvent * ) override;
+    void closeEvent(QCloseEvent *event) override;
 
 private:
-    Ui::UpdateDialog *ui;
-    QByteArray changelogData;
+    bool m_hasUpdate = true;
+    QString m_changelogHtml;
+    ChangelogType m_changelogType = CHANGELOG_COMMITS;
     NetJob::Ptr dljob;
-    ChangelogType m_changelogType = CHANGELOG_MARKDOWN;
+    QByteArray changelogData;
 };

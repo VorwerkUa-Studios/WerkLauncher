@@ -1,37 +1,24 @@
-/* Copyright 2013-2021 MultiMC Contributors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 #pragma once
 
 #include <QDialog>
 #include <memory>
+#include <QString>
 
 class Task;
-
-namespace Ui
-{
-class ProgressDialog;
-}
 
 class ProgressDialog : public QDialog
 {
     Q_OBJECT
+    Q_PROPERTY(QString statusText READ statusText NOTIFY statusTextChanged)
+    Q_PROPERTY(int progressValue READ progressValue NOTIFY progressChanged)
+    Q_PROPERTY(int progressMaximum READ progressMaximum NOTIFY progressChanged)
+    Q_PROPERTY(bool isIndeterminate READ isIndeterminate NOTIFY progressChanged)
+    Q_PROPERTY(bool skipButtonVisible READ skipButtonVisible NOTIFY skipButtonChanged)
+    Q_PROPERTY(QString skipButtonText READ skipButtonText NOTIFY skipButtonChanged)
 
 public:
-    explicit ProgressDialog(QWidget *parent = 0);
-    ~ProgressDialog();
+    explicit ProgressDialog(QWidget *parent = nullptr);
+    ~ProgressDialog() override;
 
     void updateSize();
 
@@ -40,11 +27,18 @@ public:
     int execWithTask(std::unique_ptr<Task> &task);
 
     void setSkipButton(bool present, QString label = QString());
-
     Task *getTask();
 
-public
-slots:
+    QString statusText() const { return m_statusText; }
+    int progressValue() const { return m_progressValue; }
+    int progressMaximum() const { return m_progressMaximum; }
+    bool isIndeterminate() const { return m_progressMaximum <= 0; }
+    bool skipButtonVisible() const { return m_skipButtonVisible; }
+    QString skipButtonText() const { return m_skipButtonLabel; }
+
+    Q_INVOKABLE void abortTask();
+
+public slots:
     void onTaskStarted();
     void onTaskFailed(QString failure);
     void onTaskSucceeded();
@@ -52,20 +46,25 @@ slots:
     void changeStatus(const QString &status);
     void changeProgress(qint64 current, qint64 total);
 
-
-private
-slots:
-    void on_skipButton_clicked(bool checked);
+signals:
+    void statusTextChanged();
+    void progressChanged();
+    void skipButtonChanged();
 
 protected:
-    virtual void keyPressEvent(QKeyEvent *e);
-    virtual void closeEvent(QCloseEvent *e);
+    void keyPressEvent(QKeyEvent *e) override;
+    void closeEvent(QCloseEvent *e) override;
 
 private:
     bool handleImmediateResult(QDialog::DialogCode &result);
 
 private:
-    Ui::ProgressDialog *ui;
+    Task *task = nullptr;
+    std::unique_ptr<Task> m_taskHolder;
 
-    Task *task;
+    QString m_statusText;
+    int m_progressValue = 0;
+    int m_progressMaximum = 100;
+    bool m_skipButtonVisible = false;
+    QString m_skipButtonLabel;
 };

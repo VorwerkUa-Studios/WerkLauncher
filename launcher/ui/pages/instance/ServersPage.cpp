@@ -1,5 +1,4 @@
 #include "ServersPage.h"
-#include "ui_ServersPage.h"
 
 #include <FileSystem.h>
 #include <io/stream_reader.h>
@@ -12,7 +11,13 @@
 
 
 #include <QFileSystemWatcher>
-#include <QMenu>
+#include <QDebug>
+#include <QLabel>
+#include <QQmlError>
+#include <QQuickWidget>
+#include <QStackedLayout>
+#include <QSet>
+#include <QUrl>
 
 static const int COLUMN_COUNT = 2; // 3 , TBD: latency and other nice things.
 
@@ -465,63 +470,193 @@ private:
 };
 
 ServersPage::ServersPage(InstancePtr inst, QWidget *parent)
-    : QMainWindow(parent), ui(new Ui::ServersPage) {
-  ui->setupUi(this);
-  m_inst = inst;
-  m_model = new ServersModel(inst->gameRoot(), this);
-  ui->serversView->setIconSize(QSize(64, 64));
-  ui->serversView->setModel(m_model);
-  ui->serversView->setContextMenuPolicy(Qt::CustomContextMenu);
-  connect(ui->serversView, &QTreeView::customContextMenuRequested, this,
-          &ServersPage::ShowContextMenu);
-
-  auto head = ui->serversView->header();
-  if (head->count()) {
-    head->setSectionResizeMode(0, QHeaderView::Stretch);
-    for (int i = 1; i < head->count(); i++) {
-      head->setSectionResizeMode(i, QHeaderView::ResizeToContents);
-    }
-  }
-
-  auto selectionModel = ui->serversView->selectionModel();
-  connect(selectionModel, &QItemSelectionModel::currentChanged, this,
-          &ServersPage::currentChanged);
-  connect(m_inst.get(), &MinecraftInstance::runningStatusChanged, this,
-          &ServersPage::on_RunningState_changed);
-  connect(ui->nameLine, &QLineEdit::textEdited, this, &ServersPage::nameEdited);
-  connect(ui->addressLine, &QLineEdit::textEdited, this,
-          &ServersPage::addressEdited);
-  connect(ui->resourceComboBox, SIGNAL(currentIndexChanged(int)), this,
-          SLOT(resourceIndexChanged(int)));
-  connect(m_model, &QAbstractItemModel::rowsRemoved, this,
-          &ServersPage::rowsRemoved);
-
+    : QWidget(parent), m_inst(std::move(inst)) {
+  m_model = new ServersModel(m_inst->gameRoot(), this);
   m_locked = m_inst->isRunning();
   if (m_locked) {
     m_model->lock();
   }
 
+  const auto publishChanges = [this]() { updateState(); };
+  connect(m_model, &QAbstractItemModel::rowsInserted, this, publishChanges);
+  connect(m_model, &QAbstractItemModel::rowsMoved, this, publishChanges);
+  connect(m_model, &QAbstractItemModel::dataChanged, this, publishChanges);
+  connect(m_model, &QAbstractItemModel::modelReset, this, [this]() {
+    if (currentServer >= m_model->rowCount()) {
+      currentServer = m_model->rowCount() - 1;
+    }
+    updateState();
+  });
+  connect(m_model, &QAbstractItemModel::rowsRemoved, this,
+          &ServersPage::rowsRemoved);
+  connect(m_inst.get(), &MinecraftInstance::runningStatusChanged, this,
+          &ServersPage::onRunningStatusChanged);
+
+  auto *stack = new QStackedLayout(this);
+  stack->setContentsMargins(0, 0, 0, 0);
+
+  auto *qmlWidget = new QQuickWidget(this);
+  qmlWidget->setObjectName(QStringLiteral("serversPageQml"));
+  qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+  qmlWidget->setInitialProperties(
+      {{QStringLiteral("pageController"),
+        QVariant::fromValue(static_cast<QObject *>(this))}});
+  stack->addWidget(qmlWidget);
+  stack->setCurrentWidget(qmlWidget);
+
+  auto *errorLabel = new QLabel(tr("The servers page could not be loaded."), this);
+  errorLabel->setAlignment(Qt::AlignCenter);
+  errorLabel->setWordWrap(true);
+  stack->addWidget(errorLabel);
+
+  const auto showLoadError = [qmlWidget, stack, errorLabel]() {
+    QStringList details;
+    for (const auto &error : qmlWidget->errors()) {
+      details.append(error.toString());
+    }
+    if (details.isEmpty()) {
+      details.append(QObject::tr("No QML diagnostic was provided."));
+    }
+    qCritical() << "Servers page QML failed to load:" << details.join('\n');
+    errorLabel->setToolTip(details.join('\n'));
+    stack->setCurrentWidget(errorLabel);
+  };
+  connect(qmlWidget, &QQuickWidget::statusChanged, this,
+          [qmlWidget, showLoadError](QQuickWidget::Status status) {
+            if (status == QQuickWidget::Error ||
+                (status == QQuickWidget::Ready &&
+                 !qmlWidget->rootObject())) {
+              showLoadError();
+            }
+          });
+  qmlWidget->setSource(QUrl(QStringLiteral("qrc:/qml/ServersPage.qml")));
+  if (qmlWidget->status() == QQuickWidget::Error ||
+      (qmlWidget->status() == QQuickWidget::Ready &&
+       !qmlWidget->rootObject())) {
+    showLoadError();
+  }
+
   updateState();
 }
 
-ServersPage::~ServersPage() {
-  m_model->saveNow();
-  delete ui;
+ServersPage::~ServersPage() { m_model->saveNow(); }
+
+QVariantList ServersPage::servers() const {
+  QVariantList result;
+  for (int row = 0; row < m_model->rowCount(); ++row) {
+    const auto *server = m_model->at(row);
+    if (!server) {
+      continue;
+    }
+    QVariantMap item;
+    item.insert(QStringLiteral("row"), row);
+    item.insert(QStringLiteral("name"), server->m_name);
+    item.insert(QStringLiteral("address"), server->m_address);
+    item.insert(QStringLiteral("acceptsTextures"),
+                static_cast<int>(server->m_acceptsTextures));
+    item.insert(QStringLiteral("selected"), row == currentServer);
+    item.insert(QStringLiteral("iconUrl"),
+                server->m_icon.isEmpty()
+                    ? QString()
+                    : QStringLiteral("data:image/png;base64,") +
+                          QString::fromLatin1(server->m_icon.toBase64()));
+    result.append(item);
+  }
+  return result;
 }
 
-void ServersPage::ShowContextMenu(const QPoint &pos) {
-  auto menu = ui->toolBar->createContextMenu(this, tr("Context menu"));
-  menu->exec(ui->serversView->mapToGlobal(pos));
-  delete menu;
+QVariantMap ServersPage::selectedServer() const {
+  const auto *server = m_model->at(currentServer);
+  if (!server) {
+    return {};
+  }
+  QVariantMap item;
+  item.insert(QStringLiteral("row"), currentServer);
+  item.insert(QStringLiteral("name"), server->m_name);
+  item.insert(QStringLiteral("address"), server->m_address);
+  item.insert(QStringLiteral("acceptsTextures"),
+              static_cast<int>(server->m_acceptsTextures));
+  return item;
 }
 
-QMenu *ServersPage::createPopupMenu() {
-  QMenu *filteredMenu = QMainWindow::createPopupMenu();
-  filteredMenu->removeAction(ui->toolBar->toggleViewAction());
-  return filteredMenu;
+QVariantMap ServersPage::actionStates() const {
+  const bool selected = m_model->at(currentServer) != nullptr;
+  QVariantMap result;
+  result.insert(QStringLiteral("add"), !m_locked);
+  result.insert(QStringLiteral("remove"), selected && !m_locked);
+  result.insert(QStringLiteral("moveUp"), selected && !m_locked && currentServer > 0);
+  result.insert(QStringLiteral("moveDown"),
+                selected && !m_locked && currentServer + 1 < m_model->rowCount());
+  result.insert(QStringLiteral("join"), selected && !m_locked);
+  result.insert(QStringLiteral("edit"), selected && !m_locked);
+  return result;
 }
 
-void ServersPage::on_RunningState_changed(bool running) {
+void ServersPage::selectServer(int row) {
+  if (row < -1 || row >= m_model->rowCount()) {
+    qWarning() << "Ignoring invalid server selection" << row;
+    return;
+  }
+  if (currentServer == row) {
+    return;
+  }
+  currentServer = row;
+  updateState();
+}
+
+void ServersPage::setServerName(const QString &name) {
+  m_model->setName(currentServer, name);
+}
+
+void ServersPage::setServerAddress(const QString &address) {
+  m_model->setAddress(currentServer, address);
+}
+
+void ServersPage::setAcceptsTextures(int index) {
+  if (index < static_cast<int>(Server::AcceptsTextures::ASK) ||
+      index > static_cast<int>(Server::AcceptsTextures::NEVER)) {
+    qWarning() << "Ignoring invalid server resource-pack preference" << index;
+    return;
+  }
+  m_model->setAcceptsTextures(
+      currentServer, static_cast<Server::AcceptsTextures>(index));
+}
+
+void ServersPage::triggerAction(const QString &actionName) {
+  static const QSet<QString> supportedActions{
+      QStringLiteral("add"),      QStringLiteral("remove"),
+      QStringLiteral("moveUp"),   QStringLiteral("moveDown"),
+      QStringLiteral("join")};
+  if (!supportedActions.contains(actionName)) {
+    qWarning() << "Ignoring unknown servers-page action" << actionName;
+    return;
+  }
+  if (!actionStates().value(actionName).toBool()) {
+    return;
+  }
+  if (actionName == QStringLiteral("add")) addServer();
+  else if (actionName == QStringLiteral("remove")) removeServer();
+  else if (actionName == QStringLiteral("moveUp")) moveServerUp();
+  else if (actionName == QStringLiteral("moveDown")) moveServerDown();
+  else if (actionName == QStringLiteral("join")) joinServer();
+}
+
+void ServersPage::updateState() {
+  emit serversChanged();
+  emit selectedServerChanged();
+  emit actionStatesChanged();
+}
+
+void ServersPage::rowsRemoved(const QModelIndex &, int first, int last) {
+  if (currentServer >= first && currentServer <= last) {
+    currentServer = first < m_model->rowCount() ? first : m_model->rowCount() - 1;
+  } else if (currentServer > last) {
+    currentServer -= last - first + 1;
+  }
+  updateState();
+}
+
+void ServersPage::onRunningStatusChanged(bool running) {
   if (m_locked == running) {
     return;
   }
@@ -534,110 +669,45 @@ void ServersPage::on_RunningState_changed(bool running) {
   updateState();
 }
 
-void ServersPage::currentChanged(const QModelIndex &current,
-                                 const QModelIndex &previous) {
-  int nextServer = -1;
-  if (!current.isValid()) {
-    nextServer = -1;
-  } else {
-    nextServer = current.row();
-  }
-  currentServer = nextServer;
-  updateState();
-}
-
-// WARNING: this is here because currentChanged is not accurate when removing
-// rows. the current item needs to be fixed up after removal.
-void ServersPage::rowsRemoved(const QModelIndex &parent, int first, int last) {
-  if (currentServer < first) {
-    // current was before the removal
-    return;
-  } else if (currentServer >= first && currentServer <= last) {
-    // current got removed...
-    return;
-  } else {
-    // current was past the removal
-    int count = last - first + 1;
-    currentServer -= count;
-  }
-}
-
-void ServersPage::nameEdited(const QString &name) {
-  m_model->setName(currentServer, name);
-}
-
-void ServersPage::addressEdited(const QString &address) {
-  m_model->setAddress(currentServer, address);
-}
-
-void ServersPage::resourceIndexChanged(int index) {
-  auto acceptsTextures = Server::AcceptsTextures(index);
-  m_model->setAcceptsTextures(currentServer, acceptsTextures);
-}
-
-void ServersPage::updateState() {
-  auto server = m_model->at(currentServer);
-
-  bool serverEditEnabled = server && !m_locked;
-  ui->addressLine->setEnabled(serverEditEnabled);
-  ui->nameLine->setEnabled(serverEditEnabled);
-  ui->resourceComboBox->setEnabled(serverEditEnabled);
-  ui->actionMove_Down->setEnabled(serverEditEnabled);
-  ui->actionMove_Up->setEnabled(serverEditEnabled);
-  ui->actionRemove->setEnabled(serverEditEnabled);
-  ui->actionJoin->setEnabled(serverEditEnabled);
-
-  if (server) {
-    ui->addressLine->setText(server->m_address);
-    ui->nameLine->setText(server->m_name);
-    ui->resourceComboBox->setCurrentIndex(int(server->m_acceptsTextures));
-  } else {
-    ui->addressLine->setText(QString());
-    ui->nameLine->setText(QString());
-    ui->resourceComboBox->setCurrentIndex(0);
-  }
-
-  ui->actionAdd->setDisabled(m_locked);
-}
-
 void ServersPage::openedImpl() { m_model->observe(); }
 
 void ServersPage::closedImpl() { m_model->unobserve(); }
 
-void ServersPage::on_actionAdd_triggered() {
-  int position = m_model->addEmptyRow(currentServer + 1);
-  if (position < 0) {
-    return;
+void ServersPage::addServer() {
+  const int position = m_model->addEmptyRow(currentServer + 1);
+  if (position >= 0) {
+    currentServer = position;
+    updateState();
   }
-  // select the new row
-  ui->serversView->selectionModel()->setCurrentIndex(
-      m_model->index(position), QItemSelectionModel::SelectCurrent |
-                                    QItemSelectionModel::Clear |
-                                    QItemSelectionModel::Rows);
-  currentServer = position;
 }
 
-void ServersPage::on_actionRemove_triggered() {
+void ServersPage::removeServer() {
   m_model->removeRow(currentServer);
 }
 
-void ServersPage::on_actionMove_Up_triggered() {
+void ServersPage::moveServerUp() {
   if (m_model->moveUp(currentServer)) {
-    currentServer--;
+    --currentServer;
+    updateState();
   }
 }
 
-void ServersPage::on_actionMove_Down_triggered() {
+void ServersPage::moveServerDown() {
   if (m_model->moveDown(currentServer)) {
-    currentServer++;
+    ++currentServer;
+    updateState();
   }
 }
 
-void ServersPage::on_actionJoin_triggered() {
-  const auto &address = m_model->at(currentServer)->m_address;
-  APPLICATION->launch(m_inst, true, nullptr,
-                      std::make_shared<QuickPlayTarget>(
-                          QuickPlayTarget::parseMultiplayer(address)));
+void ServersPage::joinServer() {
+  const auto *server = m_model->at(currentServer);
+  if (!server) {
+    return;
+  }
+  APPLICATION->launch(
+      m_inst, true, nullptr,
+      std::make_shared<QuickPlayTarget>(
+          QuickPlayTarget::parseMultiplayer(server->m_address)));
 }
 
 #include "ServersPage.moc"

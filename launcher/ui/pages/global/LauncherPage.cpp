@@ -1,492 +1,430 @@
-/* Copyright 2013-2021 MultiMC Contributors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 #include "LauncherPage.h"
-#include "ui_LauncherPage.h"
-#include "ui/widgets/CustomTitleBar.h"
-#include <QVBoxLayout>
 
 #include <QColorDialog>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QLabel>
 #include <QMessageBox>
 #include <QPointer>
-#include <QTextCharFormat>
-#include <QTimer>
-
-#include "updater/UpdateChecker.h"
+#include <QQuickWidget>
+#include <QStackedLayout>
+#include <QUrl>
+#include <QVBoxLayout>
 
 #include "Application.h"
 #include "BuildConfig.h"
+#include "DesktopServices.h"
+#include "FileSystem.h"
 #include "settings/SettingsObject.h"
 #include "ui/themes/ITheme.h"
-#include <FileSystem.h>
-
-#include <DesktopServices.h>
-#include <QApplication>
-#include <QProcess>
-
-// FIXME: possibly move elsewhere
-enum InstSortMode {
-  // Sort alphabetically by name.
-  Sort_Name,
-  // Sort by which instance was launched most recently.
-  Sort_LastLaunch
-};
+#include "ui/widgets/CustomTitleBar.h"
 
 LauncherPage::LauncherPage(QWidget *parent)
-    : QWidget(parent), ui(new Ui::LauncherPage) {
-  ui->setupUi(this);
-  m_themeTimer.setSingleShot(true);
-  connect(&m_themeTimer, &QTimer::timeout, this,
-          &LauncherPage::applyPendingTheme);
-  auto origForeground =
-      ui->fontPreview->palette().color(ui->fontPreview->foregroundRole());
-  auto origBackground =
-      ui->fontPreview->palette().color(ui->fontPreview->backgroundRole());
-  m_colors.reset(new LogColorCache(origForeground, origBackground));
+    : QWidget(parent)
+{
+    loadSettings();
 
-  ui->sortingModeGroup->setId(ui->sortByNameBtn, Sort_Name);
-  ui->sortingModeGroup->setId(ui->sortLastLaunchedBtn, Sort_LastLaunch);
+    m_themeTimer.setSingleShot(true);
+    connect(&m_themeTimer, &QTimer::timeout, this, &LauncherPage::applyPendingTheme);
 
-  defaultFormat = new QTextCharFormat(ui->fontPreview->currentCharFormat());
+    auto *stack = new QStackedLayout(this);
+    stack->setContentsMargins(0, 0, 0, 0);
 
-  m_languageModel = APPLICATION->translations();
-  loadSettings();
+    auto *qmlWidget = new QQuickWidget(this);
+    qmlWidget->setObjectName(QStringLiteral("launcherPageQml"));
+    qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+    qmlWidget->setInitialProperties(
+        {{QStringLiteral("pageController"),
+          QVariant::fromValue(static_cast<QObject *>(this))}});
+    stack->addWidget(qmlWidget);
+    stack->setCurrentWidget(qmlWidget);
 
-  // Updater
-  if (!BuildConfig.UPDATER_ENABLED) {
-    ui->updateSettingsBox->setHidden(true);
-  }
+    auto *errorLabel =
+        new QLabel(tr("The launcher settings page could not be loaded."), this);
+    errorLabel->setAlignment(Qt::AlignCenter);
+    errorLabel->setWordWrap(true);
+    stack->addWidget(errorLabel);
 
-  connect(ui->fontSizeBox, SIGNAL(valueChanged(int)),
-          SLOT(refreshFontPreview()));
-  connect(ui->consoleFont, SIGNAL(currentFontChanged(QFont)),
-          SLOT(refreshFontPreview()));
-
-  // move mac data button
-  QFile file(QDir::current().absolutePath() + "/dontmovemacdata");
-  if (!file.exists()) {
-    ui->migrateDataFolderMacBtn->setVisible(false);
-  }
+    const auto showLoadError = [qmlWidget, stack, errorLabel]() {
+        QStringList details;
+        for (const auto &error : qmlWidget->errors()) {
+            details.append(error.toString());
+        }
+        if (details.isEmpty()) {
+            details.append(QObject::tr("No QML diagnostic was provided."));
+        }
+        qCritical() << "Launcher settings QML failed to load:"
+                    << details.join('\n');
+        errorLabel->setToolTip(details.join('\n'));
+        stack->setCurrentWidget(errorLabel);
+    };
+    connect(qmlWidget, &QQuickWidget::statusChanged, this,
+            [qmlWidget, showLoadError](QQuickWidget::Status status) {
+                if (status == QQuickWidget::Error ||
+                    (status == QQuickWidget::Ready && !qmlWidget->rootObject())) {
+                    showLoadError();
+                }
+            });
+    qmlWidget->setSource(QUrl(QStringLiteral("qrc:/qml/LauncherPage.qml")));
+    if (qmlWidget->status() == QQuickWidget::Error ||
+        (qmlWidget->status() == QQuickWidget::Ready && !qmlWidget->rootObject())) {
+        showLoadError();
+    }
 }
 
-LauncherPage::~LauncherPage() {
-  delete ui;
-  delete defaultFormat;
+LauncherPage::~LauncherPage() = default;
+
+bool LauncherPage::updaterEnabled() const {
+    return BuildConfig.UPDATER_ENABLED;
 }
 
 bool LauncherPage::apply() {
-  applySettings();
-  return true;
+    applySettings();
+    return true;
 }
 
-void LauncherPage::on_instDirBrowseBtn_clicked() {
-  QString raw_dir = QFileDialog::getExistingDirectory(
-      this, tr("Instance Folder"), ui->instDirTextBox->text());
+void LauncherPage::loadSettings() {
+    auto s = APPLICATION->settings();
 
-  // do not allow current dir - it's dirty. Do not allow dirs that don't exist
-  if (!raw_dir.isEmpty() && QDir(raw_dir).exists()) {
-    QString cooked_dir = FS::NormalizePath(raw_dir);
-    if (FS::checkProblemticPathJava(QDir(cooked_dir))) {
-      QMessageBox warning;
-      warning.setText(
-          tr("You're trying to specify an instance folder which\'s path "
-             "contains at least one \'!\'. "
-             "Java is known to cause problems if that is the case, your "
-             "instances (probably) won't start!"));
-      warning.setInformativeText(tr("Do you really want to use this path? "
-                                    "Selecting \"No\" will close this and not "
-                                    "alter your instance path."));
-      warning.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
-      int result = warning.exec();
-      if (result == QMessageBox::Yes) {
-        ui->instDirTextBox->setText(cooked_dir);
-      }
-    } else {
-      ui->instDirTextBox->setText(cooked_dir);
+    m_autoUpdate = s->get("AutoUpdate").toBool();
+    m_minimizeToTray = s->get("MinimizeToTray").toBool();
+
+    m_iconTheme = s->get("IconTheme").toString();
+    if (m_iconTheme.isEmpty()) {
+        m_iconTheme = "flat";
     }
-  }
-}
-void LauncherPage::on_instDirOpenBtn_clicked() {
-  DesktopServices::openDirectory(ui->instDirTextBox->text());
-}
 
-void LauncherPage::on_iconsDirBrowseBtn_clicked() {
-  QString raw_dir = QFileDialog::getExistingDirectory(
-      this, tr("Icons Folder"), ui->iconsDirTextBox->text());
-
-  // do not allow current dir - it's dirty. Do not allow dirs that don't exist
-  if (!raw_dir.isEmpty() && QDir(raw_dir).exists()) {
-    QString cooked_dir = FS::NormalizePath(raw_dir);
-    ui->iconsDirTextBox->setText(cooked_dir);
-  }
-}
-void LauncherPage::on_iconsDirOpenBtn_clicked() {
-  DesktopServices::openDirectory(ui->iconsDirTextBox->text());
-}
-
-
-
-void LauncherPage::on_skinsDirBrowseBtn_clicked() {
-  QString raw_dir = QFileDialog::getExistingDirectory(
-      this, tr("Skins Folder"), ui->skinsDirTextBox->text());
-
-  // do not allow current dir - it's dirty. Do not allow dirs that don't exist
-  if (!raw_dir.isEmpty() && QDir(raw_dir).exists()) {
-    QString cooked_dir = FS::NormalizePath(raw_dir);
-    ui->skinsDirTextBox->setText(cooked_dir);
-  }
-}
-void LauncherPage::on_skinsDirOpenBtn_clicked() {
-  DesktopServices::openDirectory(ui->skinsDirTextBox->text());
-}
-
-void LauncherPage::on_migrateDataFolderMacBtn_clicked() {
-  QFile file(QDir::current().absolutePath() + "/dontmovemacdata");
-  file.remove();
-  QProcess::startDetached(qApp->arguments()[0]);
-  qApp->quit();
-}
-
-void LauncherPage::on_themeComboBox_currentIndexChanged(int index) {
-  QString themeName;
-  switch (index) {
-  case 0:
-    themeName = "flat";
-    break;
-  case 1:
-    themeName = "colored";
-    break;
-  case 2:
-    themeName = "white";
-    break;
-  default:
-    themeName = "flat";
-    break;
-  }
-  APPLICATION->setIconTheme(themeName);
-
-  // Trigger global UI refresh to apply new icons immediatey
-  // Defer to ensure stability during index changes
-  QPointer<LauncherPage> safeThis(this);
-  QTimer::singleShot(0, this, [safeThis]() {
-    if (!safeThis)
-      return;
-    auto currentTheme =
-        safeThis->ui->themeComboBoxColors->currentData().toString();
-    APPLICATION->setApplicationTheme(currentTheme, false);
-  });
-}
-
-void LauncherPage::on_themeComboBoxColors_currentIndexChanged(int index) {
-  QString newAppTheme = ui->themeComboBoxColors->itemData(index).toString();
-  if (!newAppTheme.isEmpty()) {
-    m_pendingTheme = newAppTheme;
-    m_themeTimer.start(200); // 200ms debounce
-  }
-}
-
-void LauncherPage::applyPendingTheme() {
-  if (!m_pendingTheme.isEmpty()) {
-    APPLICATION->setApplicationTheme(m_pendingTheme, false);
-  }
-}
-
-void LauncherPage::on_accentColorButton_clicked() {
-  auto s = APPLICATION->settings();
-  QString currentColorStr = s->get("CustomAccentColor").toString();
-  QColor currentColor(currentColorStr);
-
-  QColorDialog colorDlg(currentColor, this);
-  colorDlg.setWindowFlags(Qt::FramelessWindowHint | Qt::Dialog);
-  colorDlg.setOptions(QColorDialog::DontUseNativeDialog);
-  
-  auto titleBar = new CustomTitleBar(&colorDlg);
-  if (auto layout = qobject_cast<QVBoxLayout*>(colorDlg.layout())) {
-      layout->insertWidget(0, titleBar);
-      layout->setContentsMargins(0, 0, 0, 0); // Remove outer margins if any, to make titlebar flush
-  } else {
-      // Fallback if layout is not QVBoxLayout
-      auto vLayout = new QVBoxLayout(&colorDlg);
-      vLayout->setContentsMargins(0, 0, 0, 0);
-      vLayout->addWidget(titleBar);
-      vLayout->addWidget(colorDlg.layout()->widget()); // This might not work, but let's hope it's QVBoxLayout
-  }
-  
-  if (colorDlg.exec() != QDialog::Accepted) {
-      return;
-  }
-  
-  QColor newColor = colorDlg.currentColor();
-  if (!newColor.isValid())
-    return;
-
-  // Compare by hex name to avoid format-related mismatches
-  if (newColor.name() == currentColor.name())
-    return;
-
-  // Disable button to prevent rapid re-entry and potential crashes
-  ui->accentColorButton->setEnabled(false);
-  s->set("CustomAccentColor", newColor.name());
-
-  // Defer theme re-application with a small delay to ensure UI stability
-  // and use QPointer for safety if the page is destroyed during the delay
-  QPointer<LauncherPage> safeThis(this);
-  QTimer::singleShot(100, this, [safeThis, s]() {
-    if (!safeThis)
-      return;
-
-    auto currentTheme =
-        safeThis->ui->themeComboBoxColors->currentData().toString();
-    APPLICATION->setApplicationTheme(currentTheme, false);
-
-    // Re-enable the button after the theme has been applied
-    if (safeThis->ui && safeThis->ui->accentColorButton) {
-      safeThis->ui->accentColorButton->setEnabled(true);
+    m_applicationTheme = s->get("ApplicationTheme").toString();
+    if (m_applicationTheme.isEmpty()) {
+        m_applicationTheme = APPLICATION->currentTheme();
     }
-  });
-}
 
-void LauncherPage::on_bgChooseBtn_clicked() {
-  QString path = QFileDialog::getOpenFileName(
-      this, "Оберіть зображення для фону", QString(),
-      "Зображення (*.png *.jpg *.jpeg *.bmp *.webp)");
-  if (path.isEmpty())
-    return;
+    m_instanceDir = s->get("InstanceDir").toString();
+    m_iconsDir = s->get("IconsDir").toString();
+    m_skinsDir = s->get("SkinsDir").toString();
 
-  auto s = APPLICATION->settings();
-  s->set("CustomBackgroundImage", path);
-  ui->bgPathLabel->setText(QFileInfo(path).fileName());
+    m_instSortMode = s->get("InstSortMode").toString();
+    if (m_instSortMode.isEmpty()) {
+        m_instSortMode = "Name";
+    }
 
-  // Re-apply theme so QMainWindow becomes transparent
-  auto currentTheme = ui->themeComboBoxColors->currentData().toString();
-  APPLICATION->setApplicationTheme(currentTheme, false);
-}
+    m_customBackgroundImage = s->get("CustomBackgroundImage").toString();
+    m_customBackgroundOpacity = qRound(s->get("CustomBackgroundOpacity").toDouble() * 100.0);
+    if (m_customBackgroundOpacity <= 0) {
+        m_customBackgroundOpacity = 100;
+    }
+    m_customBackgroundBlur = s->get("CustomBackgroundBlur").toBool();
 
-void LauncherPage::on_bgClearBtn_clicked() {
-  auto s = APPLICATION->settings();
-  s->set("CustomBackgroundImage", "");
-  ui->bgPathLabel->setText("Немає");
-
-  // Re-apply theme so QMainWindow gets solid background back
-  auto currentTheme = ui->themeComboBoxColors->currentData().toString();
-  APPLICATION->setApplicationTheme(currentTheme, false);
-}
-
-void LauncherPage::on_bgOpacitySlider_valueChanged(int value) {
-  auto s = APPLICATION->settings();
-  s->set("CustomBackgroundOpacity", value / 100.0);
-}
-
-void LauncherPage::on_bgBlurCheck_stateChanged(int state) {
-  auto s = APPLICATION->settings();
-  s->set("CustomBackgroundBlur", state == Qt::Checked);
+    m_showConsole = s->get("ShowConsole").toBool();
+    m_autoCloseConsole = s->get("AutoCloseConsole").toBool();
+    m_showConsoleOnError = s->get("ShowConsoleOnError").toBool();
+    m_consoleFontSize = s->get("ConsoleFontSize").toInt();
+    if (m_consoleFontSize <= 0) {
+        m_consoleFontSize = 11;
+    }
+    m_consoleMaxLines = s->get("ConsoleMaxLines").toInt();
+    if (m_consoleMaxLines <= 0) {
+        m_consoleMaxLines = 10000;
+    }
+    m_consoleOverflowStop = s->get("ConsoleOverflowStop").toBool();
 }
 
 void LauncherPage::applySettings() {
-  auto s = APPLICATION->settings();
+    auto s = APPLICATION->settings();
 
-  if (ui->resetNotificationsBtn->isChecked()) {
-    s->set("ShownNotifications", QString());
-  }
-
-  // Updates
-  s->set("AutoUpdate", ui->autoUpdateCheckBox->isChecked());
-
-  // Window settings
-  s->set("MinimizeToTray", ui->minimizeToTrayCheck->isChecked());
-
-  auto original = s->get("IconTheme").toString();
-  // FIXME: make generic
-  switch (ui->themeComboBox->currentIndex()) {
-  case 0:
-    s->set("IconTheme", "flat");
-    break;
-  case 1:
-    s->set("IconTheme", "colored");
-    break;
-  case 2:
-    s->set("IconTheme", "white");
-    break;
-  default:
-    s->set("IconTheme", "flat");
-    break;
-  }
-
-  if (original != s->get("IconTheme")) {
-    APPLICATION->setIconTheme(s->get("IconTheme").toString());
-  }
-
-  auto originalAppTheme = s->get("ApplicationTheme").toString();
-  auto newAppTheme = ui->themeComboBoxColors->currentData().toString();
-  if (originalAppTheme != newAppTheme) {
-    s->set("ApplicationTheme", newAppTheme);
-    if (APPLICATION->currentTheme() != newAppTheme) {
-      APPLICATION->setApplicationTheme(newAppTheme, false);
+    if (m_resetNotifications) {
+        s->set("ShownNotifications", QString());
+        m_resetNotifications = false;
     }
-  }
 
-  // Console settings
-  s->set("ShowConsole", ui->showConsoleCheck->isChecked());
-  s->set("AutoCloseConsole", ui->autoCloseConsoleCheck->isChecked());
-  s->set("ShowConsoleOnError", ui->showConsoleErrorCheck->isChecked());
-  QString consoleFontFamily = ui->consoleFont->currentFont().family();
-  s->set("ConsoleFont", consoleFontFamily);
-  s->set("ConsoleFontSize", ui->fontSizeBox->value());
-  s->set("ConsoleMaxLines", ui->lineLimitSpinBox->value());
-  s->set("ConsoleOverflowStop",
-         ui->checkStopLogging->checkState() != Qt::Unchecked);
+    s->set("AutoUpdate", m_autoUpdate);
+    s->set("MinimizeToTray", m_minimizeToTray);
 
-  // Folders
-  // TODO: Offer to move instances to new instance folder.
-  s->set("InstanceDir", ui->instDirTextBox->text());
+    auto origIconTheme = s->get("IconTheme").toString();
+    if (origIconTheme != m_iconTheme) {
+        s->set("IconTheme", m_iconTheme);
+        APPLICATION->setIconTheme(m_iconTheme);
+    }
 
-  s->set("IconsDir", ui->iconsDirTextBox->text());
-  s->set("SkinsDir", ui->skinsDirTextBox->text());
+    auto origAppTheme = s->get("ApplicationTheme").toString();
+    if (origAppTheme != m_applicationTheme) {
+        s->set("ApplicationTheme", m_applicationTheme);
+        if (APPLICATION->currentTheme() != m_applicationTheme) {
+            APPLICATION->setApplicationTheme(m_applicationTheme, false);
+        }
+    }
 
-  auto sortMode = (InstSortMode)ui->sortingModeGroup->checkedId();
-  switch (sortMode) {
-  case Sort_LastLaunch:
-    s->set("InstSortMode", "LastLaunch");
-    break;
-  case Sort_Name:
-  default:
-    s->set("InstSortMode", "Name");
-    break;
-  }
+    s->set("InstanceDir", m_instanceDir);
+    s->set("IconsDir", m_iconsDir);
+    s->set("SkinsDir", m_skinsDir);
+    s->set("InstSortMode", m_instSortMode);
+
+    s->set("CustomBackgroundImage", m_customBackgroundImage);
+    s->set("CustomBackgroundOpacity", m_customBackgroundOpacity / 100.0);
+    s->set("CustomBackgroundBlur", m_customBackgroundBlur);
+
+    s->set("ShowConsole", m_showConsole);
+    s->set("AutoCloseConsole", m_autoCloseConsole);
+    s->set("ShowConsoleOnError", m_showConsoleOnError);
+    s->set("ConsoleFontSize", m_consoleFontSize);
+    s->set("ConsoleMaxLines", m_consoleMaxLines);
+    s->set("ConsoleOverflowStop", m_consoleOverflowStop);
 }
-void LauncherPage::loadSettings() {
-  auto s = APPLICATION->settings();
 
-  // Block signals to prevent redundant theme updates during initialization
-  ui->themeComboBox->blockSignals(true);
-  ui->themeComboBoxColors->blockSignals(true);
+void LauncherPage::setAutoUpdate(bool value) {
+    if (m_autoUpdate != value) {
+        m_autoUpdate = value;
+        emit autoUpdateChanged();
+    }
+}
 
-  // Updates
-  ui->autoUpdateCheckBox->setChecked(s->get("AutoUpdate").toBool());
+void LauncherPage::setMinimizeToTray(bool value) {
+    if (m_minimizeToTray != value) {
+        m_minimizeToTray = value;
+        emit minimizeToTrayChanged();
+    }
+}
 
-  // Window settings
-  ui->minimizeToTrayCheck->setChecked(s->get("MinimizeToTray").toBool());
+void LauncherPage::setInstSortMode(const QString &value) {
+    if (m_instSortMode != value) {
+        m_instSortMode = value;
+        emit instSortModeChanged();
+    }
+}
 
-  // FIXME: make generic
-  auto theme = s->get("IconTheme").toString();
-  if (theme == "flat") {
-    ui->themeComboBox->setCurrentIndex(0);
-  } else if (theme == "colored") {
-    ui->themeComboBox->setCurrentIndex(1);
-  } else if (theme == "white") {
-    ui->themeComboBox->setCurrentIndex(2);
-  } else {
-    // default to flat
-    ui->themeComboBox->setCurrentIndex(0);
-  }
+void LauncherPage::setInstanceDir(const QString &value) {
+    if (m_instanceDir != value) {
+        m_instanceDir = value;
+        emit instanceDirChanged();
+    }
+}
 
-  {
-    auto currentTheme = s->get("ApplicationTheme").toString();
+void LauncherPage::setIconsDir(const QString &value) {
+    if (m_iconsDir != value) {
+        m_iconsDir = value;
+        emit iconsDirChanged();
+    }
+}
+
+void LauncherPage::setSkinsDir(const QString &value) {
+    if (m_skinsDir != value) {
+        m_skinsDir = value;
+        emit skinsDirChanged();
+    }
+}
+
+void LauncherPage::setIconTheme(const QString &value) {
+    if (m_iconTheme != value) {
+        m_iconTheme = value;
+        APPLICATION->setIconTheme(value);
+        emit iconThemeChanged();
+    }
+}
+
+void LauncherPage::setApplicationTheme(const QString &value) {
+    if (m_applicationTheme != value) {
+        m_applicationTheme = value;
+        m_pendingTheme = value;
+        m_themeTimer.start(200);
+        emit applicationThemeChanged();
+    }
+}
+
+void LauncherPage::applyPendingTheme() {
+    if (!m_pendingTheme.isEmpty()) {
+        APPLICATION->setApplicationTheme(m_pendingTheme, false);
+    }
+}
+
+QVariantList LauncherPage::availableThemes() const {
+    QVariantList list;
     auto themes = APPLICATION->getValidApplicationThemes();
-    int idx = 0;
-    for (auto &theme : themes) {
-      ui->themeComboBoxColors->addItem(theme->name(), theme->id());
-      if (currentTheme == theme->id()) {
-        ui->themeComboBoxColors->setCurrentIndex(idx);
-      }
-      idx++;
+    for (const auto &theme : themes) {
+        QVariantMap map;
+        map[QStringLiteral("id")] = theme->id();
+        map[QStringLiteral("name")] = theme->name();
+        list.append(map);
     }
-  }
-
-  ui->themeComboBox->blockSignals(false);
-  ui->themeComboBoxColors->blockSignals(false);
-
-  // Console settings
-  ui->showConsoleCheck->setChecked(s->get("ShowConsole").toBool());
-  ui->autoCloseConsoleCheck->setChecked(s->get("AutoCloseConsole").toBool());
-  ui->showConsoleErrorCheck->setChecked(s->get("ShowConsoleOnError").toBool());
-  QString fontFamily = APPLICATION->settings()->get("ConsoleFont").toString();
-  QFont consoleFont(fontFamily);
-  ui->consoleFont->setCurrentFont(consoleFont);
-
-  bool conversionOk = true;
-  int fontSize =
-      APPLICATION->settings()->get("ConsoleFontSize").toInt(&conversionOk);
-  if (!conversionOk) {
-    fontSize = 11;
-  }
-  ui->fontSizeBox->setValue(fontSize);
-  refreshFontPreview();
-  ui->lineLimitSpinBox->setValue(s->get("ConsoleMaxLines").toInt());
-  ui->checkStopLogging->setChecked(s->get("ConsoleOverflowStop").toBool());
-
-  // Folders
-  ui->instDirTextBox->setText(s->get("InstanceDir").toString());
-
-  ui->iconsDirTextBox->setText(s->get("IconsDir").toString());
-  ui->skinsDirTextBox->setText(s->get("SkinsDir").toString());
-
-  QString sortMode = s->get("InstSortMode").toString();
-
-  if (sortMode == "LastLaunch") {
-    ui->sortLastLaunchedBtn->setChecked(true);
-  } else {
-    ui->sortByNameBtn->setChecked(true);
-  }
-
-  // Background settings
-  QString bgPath = s->get("CustomBackgroundImage").toString();
-  if (!bgPath.isEmpty()) {
-    ui->bgPathLabel->setText(QFileInfo(bgPath).fileName());
-  } else {
-    ui->bgPathLabel->setText("Немає");
-  }
-  ui->bgOpacitySlider->setValue(
-      (int)(s->get("CustomBackgroundOpacity").toDouble() * 100));
-  ui->bgBlurCheck->setChecked(s->get("CustomBackgroundBlur").toBool());
+    return list;
 }
 
-void LauncherPage::refreshFontPreview() {
-  int fontSize = ui->fontSizeBox->value();
-  QString fontFamily = ui->consoleFont->currentFont().family();
-  ui->fontPreview->clear();
-  defaultFormat->setFont(QFont(fontFamily, fontSize));
-  {
-    QTextCharFormat format(*defaultFormat);
-    format.setForeground(m_colors->getFront(MessageLevel::Error));
-    // append a paragraph/line
-    auto workCursor = ui->fontPreview->textCursor();
-    workCursor.movePosition(QTextCursor::End);
-    workCursor.insertText(tr("[Something/ERROR] A spooky error!"), format);
-    workCursor.insertBlock();
-  }
-  {
-    QTextCharFormat format(*defaultFormat);
-    format.setForeground(m_colors->getFront(MessageLevel::Message));
-    // append a paragraph/line
-    auto workCursor = ui->fontPreview->textCursor();
-    workCursor.movePosition(QTextCursor::End);
-    workCursor.insertText(tr("[Test/INFO] A harmless message..."), format);
-    workCursor.insertBlock();
-  }
-  {
-    QTextCharFormat format(*defaultFormat);
-    format.setForeground(m_colors->getFront(MessageLevel::Warning));
-    // append a paragraph/line
-    auto workCursor = ui->fontPreview->textCursor();
-    workCursor.movePosition(QTextCursor::End);
-    workCursor.insertText(tr("[Something/WARN] A not so spooky warning."),
-                          format);
-    workCursor.insertBlock();
-  }
+QString LauncherPage::customAccentColor() const {
+    return APPLICATION->settings()->get("CustomAccentColor").toString();
+}
+
+void LauncherPage::setCustomBackgroundOpacity(int value) {
+    value = qBound(0, value, 100);
+    if (m_customBackgroundOpacity != value) {
+        m_customBackgroundOpacity = value;
+        APPLICATION->settings()->set("CustomBackgroundOpacity", value / 100.0);
+        emit customBackgroundOpacityChanged();
+    }
+}
+
+void LauncherPage::setCustomBackgroundBlur(bool value) {
+    if (m_customBackgroundBlur != value) {
+        m_customBackgroundBlur = value;
+        APPLICATION->settings()->set("CustomBackgroundBlur", value);
+        emit customBackgroundBlurChanged();
+    }
+}
+
+void LauncherPage::setShowConsole(bool value) {
+    if (m_showConsole != value) {
+        m_showConsole = value;
+        emit showConsoleChanged();
+    }
+}
+
+void LauncherPage::setAutoCloseConsole(bool value) {
+    if (m_autoCloseConsole != value) {
+        m_autoCloseConsole = value;
+        emit autoCloseConsoleChanged();
+    }
+}
+
+void LauncherPage::setShowConsoleOnError(bool value) {
+    if (m_showConsoleOnError != value) {
+        m_showConsoleOnError = value;
+        emit showConsoleOnErrorChanged();
+    }
+}
+
+void LauncherPage::setConsoleFontSize(int value) {
+    value = qBound(6, value, 36);
+    if (m_consoleFontSize != value) {
+        m_consoleFontSize = value;
+        emit consoleFontSizeChanged();
+    }
+}
+
+void LauncherPage::setConsoleMaxLines(int value) {
+    value = qBound(100, value, 1000000);
+    if (m_consoleMaxLines != value) {
+        m_consoleMaxLines = value;
+        emit consoleMaxLinesChanged();
+    }
+}
+
+void LauncherPage::setConsoleOverflowStop(bool value) {
+    if (m_consoleOverflowStop != value) {
+        m_consoleOverflowStop = value;
+        emit consoleOverflowStopChanged();
+    }
+}
+
+void LauncherPage::browseInstanceDir() {
+    QString raw_dir = QFileDialog::getExistingDirectory(
+        this, tr("Instance Folder"), m_instanceDir);
+
+    if (!raw_dir.isEmpty() && QDir(raw_dir).exists()) {
+        QString cooked_dir = FS::NormalizePath(raw_dir);
+        if (FS::checkProblemticPathJava(QDir(cooked_dir))) {
+            auto result = QMessageBox::warning(
+                this, tr("Warning"),
+                tr("You're trying to specify an instance folder which's path contains at least one '!'. "
+                   "Java is known to cause problems if that is the case, your instances (probably) won't start!\n\n"
+                   "Do you really want to use this path?"),
+                QMessageBox::Yes | QMessageBox::No);
+            if (result == QMessageBox::Yes) {
+                setInstanceDir(cooked_dir);
+            }
+        } else {
+            setInstanceDir(cooked_dir);
+        }
+    }
+}
+
+void LauncherPage::openInstanceDir() {
+    DesktopServices::openDirectory(m_instanceDir);
+}
+
+void LauncherPage::browseIconsDir() {
+    QString raw_dir = QFileDialog::getExistingDirectory(
+        this, tr("Icons Folder"), m_iconsDir);
+    if (!raw_dir.isEmpty() && QDir(raw_dir).exists()) {
+        setIconsDir(FS::NormalizePath(raw_dir));
+    }
+}
+
+void LauncherPage::openIconsDir() {
+    DesktopServices::openDirectory(m_iconsDir);
+}
+
+void LauncherPage::browseSkinsDir() {
+    QString raw_dir = QFileDialog::getExistingDirectory(
+        this, tr("Skins Folder"), m_skinsDir);
+    if (!raw_dir.isEmpty() && QDir(raw_dir).exists()) {
+        setSkinsDir(FS::NormalizePath(raw_dir));
+    }
+}
+
+void LauncherPage::openSkinsDir() {
+    DesktopServices::openDirectory(m_skinsDir);
+}
+
+void LauncherPage::pickAccentColor() {
+    auto s = APPLICATION->settings();
+    QString currentColorStr = s->get("CustomAccentColor").toString();
+    QColor currentColor(currentColorStr);
+
+    QColorDialog colorDlg(currentColor, this);
+    colorDlg.setWindowFlags(Qt::FramelessWindowHint | Qt::Dialog);
+    colorDlg.setOptions(QColorDialog::DontUseNativeDialog);
+
+    auto titleBar = new CustomTitleBar(&colorDlg);
+    if (auto layout = qobject_cast<QVBoxLayout*>(colorDlg.layout())) {
+        layout->insertWidget(0, titleBar);
+        layout->setContentsMargins(0, 0, 0, 0);
+    }
+
+    if (colorDlg.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    QColor newColor = colorDlg.currentColor();
+    if (!newColor.isValid() || newColor.name() == currentColor.name())
+        return;
+
+    s->set("CustomAccentColor", newColor.name());
+    emit customAccentColorChanged();
+
+    QPointer<LauncherPage> safeThis(this);
+    QTimer::singleShot(100, this, [safeThis]() {
+        if (!safeThis)
+            return;
+        APPLICATION->setApplicationTheme(safeThis->m_applicationTheme, false);
+    });
+}
+
+void LauncherPage::chooseBackgroundImage() {
+    QString path = QFileDialog::getOpenFileName(
+        this, tr("Select background image"), QString(),
+        tr("Images (*.png *.jpg *.jpeg *.bmp *.webp)"));
+    if (path.isEmpty())
+        return;
+
+    auto s = APPLICATION->settings();
+    s->set("CustomBackgroundImage", path);
+    m_customBackgroundImage = path;
+    emit customBackgroundImageChanged();
+
+    APPLICATION->setApplicationTheme(m_applicationTheme, false);
+}
+
+void LauncherPage::clearBackgroundImage() {
+    auto s = APPLICATION->settings();
+    s->set("CustomBackgroundImage", "");
+    m_customBackgroundImage = "";
+    emit customBackgroundImageChanged();
+
+    APPLICATION->setApplicationTheme(m_applicationTheme, false);
+}
+
+void LauncherPage::resetNotifications() {
+    m_resetNotifications = true;
+    QMessageBox::information(
+        this, tr("Notifications"),
+        tr("Hidden notifications have been reset."));
 }

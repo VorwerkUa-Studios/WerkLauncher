@@ -15,80 +15,64 @@
 
 #pragma once
 
-#include <QMainWindow>
-#include <QString>
+#include <QVariantList>
+#include <QVariantMap>
+#include <QWidget>
 
 #include "ui/pages/BasePage.h"
 #include <Application.h>
 
-namespace Ui
-{
-class ServersPage;
-}
-
-struct Server;
 class ServersModel;
-class MinecraftInstance;
 
-class ServersPage : public QMainWindow, public BasePage
+class ServersPage : public QWidget, public BasePage
 {
     Q_OBJECT
+    Q_PROPERTY(QString pageTitle READ displayName CONSTANT)
+    Q_PROPERTY(QVariantList servers READ servers NOTIFY serversChanged)
+    Q_PROPERTY(QVariantMap selectedServer READ selectedServer NOTIFY selectedServerChanged)
+    Q_PROPERTY(QVariantMap actionStates READ actionStates NOTIFY actionStatesChanged)
 
 public:
-    explicit ServersPage(InstancePtr inst, QWidget *parent = 0);
-    virtual ~ServersPage();
+    explicit ServersPage(InstancePtr inst, QWidget *parent = nullptr);
+    ~ServersPage() override;
 
     void openedImpl() override;
     void closedImpl() override;
+    QString displayName() const override { return tr("Servers"); }
+    QIcon icon() const override { return APPLICATION->getThemedIcon("unknown_server"); }
+    QString id() const override { return QStringLiteral("servers"); }
+    QString helpPage() const override { return QStringLiteral("Servers-management"); }
 
-    virtual QString displayName() const override
-    {
-        return tr("Servers");
-    }
-    virtual QIcon icon() const override
-    {
-        return APPLICATION->getThemedIcon("unknown_server");
-    }
-    virtual QString id() const override
-    {
-        return "servers";
-    }
-    virtual QString helpPage() const override
-    {
-        return "Servers-management";
-    }
+    QVariantList servers() const;
+    QVariantMap selectedServer() const;
+    QVariantMap actionStates() const;
 
-protected:
-    QMenu * createPopupMenu() override;
+    Q_INVOKABLE void selectServer(int row);
+    Q_INVOKABLE void setServerName(const QString &name);
+    Q_INVOKABLE void setServerAddress(const QString &address);
+    Q_INVOKABLE void setAcceptsTextures(int index);
+    Q_INVOKABLE void triggerAction(const QString &actionName);
+
+signals:
+    void serversChanged();
+    void selectedServerChanged();
+    void actionStatesChanged();
 
 private:
     void updateState();
-    void scheduleSave();
-    bool saveIsScheduled() const;
+    void addServer();
+    void removeServer();
+    void moveServerUp();
+    void moveServerDown();
+    void joinServer();
 
 private slots:
-    void currentChanged(const QModelIndex &current, const QModelIndex &previous);
     void rowsRemoved(const QModelIndex &parent, int first, int last);
+    void onRunningStatusChanged(bool running);
 
-    void on_actionAdd_triggered();
-    void on_actionRemove_triggered();
-    void on_actionMove_Up_triggered();
-    void on_actionMove_Down_triggered();
-    void on_actionJoin_triggered();
-
-    void on_RunningState_changed(bool running);
-
-    void nameEdited(const QString & name);
-    void addressEdited(const QString & address);
-    void resourceIndexChanged(int index);\
-
-    void ShowContextMenu(const QPoint &pos);
-
-private: // data
+private:
     int currentServer = -1;
     bool m_locked = true;
-    Ui::ServersPage *ui = nullptr;
-    ServersModel * m_model = nullptr;
+    ServersModel *m_model = nullptr;
     InstancePtr m_inst = nullptr;
 };
-

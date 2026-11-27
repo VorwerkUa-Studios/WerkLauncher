@@ -24,14 +24,18 @@
 
 class SettingsObject;
 
-namespace Ui
-{
-class MinecraftPage;
-}
-
 class MinecraftPage : public QWidget, public BasePage
 {
     Q_OBJECT
+    Q_PROPERTY(bool launchMaximized READ launchMaximized WRITE setLaunchMaximized NOTIFY launchMaximizedChanged)
+    Q_PROPERTY(int windowWidth READ windowWidth WRITE setWindowWidth NOTIFY windowSizeChanged)
+    Q_PROPERTY(int windowHeight READ windowHeight WRITE setWindowHeight NOTIFY windowSizeChanged)
+    Q_PROPERTY(bool useNativeOpenAL READ useNativeOpenAL WRITE setUseNativeOpenAL NOTIFY settingsChanged)
+    Q_PROPERTY(bool useNativeGLFW READ useNativeGLFW WRITE setUseNativeGLFW NOTIFY settingsChanged)
+    Q_PROPERTY(bool showGameTime READ showGameTime WRITE setShowGameTime NOTIFY settingsChanged)
+    Q_PROPERTY(bool showGlobalGameTime READ showGlobalGameTime WRITE setShowGlobalGameTime NOTIFY settingsChanged)
+    Q_PROPERTY(bool recordGameTime READ recordGameTime WRITE setRecordGameTime NOTIFY settingsChanged)
+    Q_PROPERTY(bool showGameTimeHours READ showGameTimeHours WRITE setShowGameTimeHours NOTIFY settingsChanged)
 
 public:
     explicit MinecraftPage(QWidget *parent = 0);
@@ -55,16 +59,42 @@ public:
     }
     bool apply() override;
 
+    bool launchMaximized() const { return m_launchMaximized; }
+    void setLaunchMaximized(bool value);
+    int windowWidth() const { return m_windowWidth; }
+    void setWindowWidth(int value);
+    int windowHeight() const { return m_windowHeight; }
+    void setWindowHeight(int value);
+    bool useNativeOpenAL() const { return m_useNativeOpenAL; }
+    void setUseNativeOpenAL(bool value);
+    bool useNativeGLFW() const { return m_useNativeGLFW; }
+    void setUseNativeGLFW(bool value);
+    bool showGameTime() const { return m_showGameTime; }
+    void setShowGameTime(bool value);
+    bool showGlobalGameTime() const { return m_showGlobalGameTime; }
+    void setShowGlobalGameTime(bool value);
+    bool recordGameTime() const { return m_recordGameTime; }
+    void setRecordGameTime(bool value);
+    bool showGameTimeHours() const { return m_showGameTimeHours; }
+    void setShowGameTimeHours(bool value);
+
+signals:
+    void launchMaximizedChanged();
+    void windowSizeChanged();
+    void settingsChanged();
+
 private:
-    void updateCheckboxStuff();
     void applySettings();
     void loadSettings();
 
-private
-slots:
-    void on_maximizedCheckBox_clicked(bool checked);
-
 private:
-    Ui::MinecraftPage *ui;
-
+    bool m_launchMaximized = false;
+    int m_windowWidth = 854;
+    int m_windowHeight = 480;
+    bool m_useNativeOpenAL = false;
+    bool m_useNativeGLFW = false;
+    bool m_showGameTime = true;
+    bool m_showGlobalGameTime = true;
+    bool m_recordGameTime = true;
+    bool m_showGameTimeHours = false;
 };

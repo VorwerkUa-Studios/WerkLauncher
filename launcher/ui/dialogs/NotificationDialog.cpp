@@ -1,69 +1,81 @@
 #include "NotificationDialog.h"
-#include "ui/widgets/CustomTitleBar.h"
-#include "ui_NotificationDialog.h"
 
-#include <QStyle>
+#include <QLabel>
+#include <QQuickWidget>
 #include <QTimerEvent>
+#include <QUrl>
+#include <QVBoxLayout>
+
+#include "ui/GuiUtil.h"
+#include "ui/widgets/CustomTitleBar.h"
 
 NotificationDialog::NotificationDialog(
     const NotificationChecker::NotificationEntry &entry, QWidget *parent)
-    : QDialog(parent), ui(new Ui::NotificationDialog) {
+    : QDialog(parent) {
   setWindowFlags(Qt::FramelessWindowHint | windowFlags());
-  ui->setupUi(this);
+  setWindowTitle(tr("Notification"));
+  resize(450, 240);
 
-  auto titleBar = new CustomTitleBar(this);
-  titleBar->setTitle(tr("Notification"));
-  ui->verticalLayout->setContentsMargins(0, 0, 0, 0);
-  ui->verticalLayout->setSpacing(0);
-  ui->verticalLayout->insertWidget(0, titleBar);
-
-  QStyle::StandardPixmap icon;
+  m_message = entry.message;
   switch (entry.type) {
   case NotificationChecker::NotificationEntry::Critical:
-    icon = QStyle::SP_MessageBoxCritical;
+    m_type = "critical";
     break;
   case NotificationChecker::NotificationEntry::Warning:
-    icon = QStyle::SP_MessageBoxWarning;
+    m_type = "warning";
     break;
   default:
   case NotificationChecker::NotificationEntry::Information:
-    icon = QStyle::SP_MessageBoxInformation;
+    m_type = "info";
     break;
   }
-  ui->iconLabel->setPixmap(style()->standardPixmap(icon, 0, this));
-  ui->messageLabel->setText(entry.message);
 
-  m_dontShowAgainText = tr("Don't show again");
-  m_closeText = tr("Close");
+  auto *mainLayout = new QVBoxLayout(this);
+  mainLayout->setContentsMargins(0, 0, 0, 0);
+  mainLayout->setSpacing(0);
 
-  ui->dontShowAgainBtn->setText(m_dontShowAgainText +
-                                QString(" (%1)").arg(m_dontShowAgainTime));
-  ui->closeBtn->setText(m_closeText + QString(" (%1)").arg(m_closeTime));
+  auto *titleBar = new CustomTitleBar(this);
+  titleBar->setTitle(tr("Notification"));
+  mainLayout->addWidget(titleBar);
+
+  auto *qmlWidget = new QQuickWidget(this);
+  qmlWidget->setObjectName(QStringLiteral("notificationDialogQml"));
+  qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+  qmlWidget->setInitialProperties(
+      {{QStringLiteral("dialogController"),
+        QVariant::fromValue(static_cast<QObject *>(this))}});
+
+  connect(qmlWidget, &QQuickWidget::statusChanged, this,
+          [qmlWidget](QQuickWidget::Status status) {
+            if (status == QQuickWidget::Error) {
+              for (const auto &err : qmlWidget->errors()) {
+                qCritical() << "NotificationDialog QML error:" << err.toString();
+              }
+            }
+          });
+
+  qmlWidget->setSource(QUrl(QStringLiteral("qrc:/qml/NotificationDialog.qml")));
+  mainLayout->addWidget(qmlWidget);
 
   startTimer(1000);
+  GuiUtil::fitWindowToAvailableScreen(this, size());
 }
 
-NotificationDialog::~NotificationDialog() { delete ui; }
+NotificationDialog::~NotificationDialog() = default;
 
 void NotificationDialog::timerEvent(QTimerEvent *event) {
+  bool changed = false;
   if (m_dontShowAgainTime > 0) {
     m_dontShowAgainTime--;
-    if (m_dontShowAgainTime == 0) {
-      ui->dontShowAgainBtn->setText(m_dontShowAgainText);
-      ui->dontShowAgainBtn->setEnabled(true);
-    } else {
-      ui->dontShowAgainBtn->setText(m_dontShowAgainText +
-                                    QString(" (%1)").arg(m_dontShowAgainTime));
-    }
+    changed = true;
   }
   if (m_closeTime > 0) {
     m_closeTime--;
-    if (m_closeTime == 0) {
-      ui->closeBtn->setText(m_closeText);
-      ui->closeBtn->setEnabled(true);
-    } else {
-      ui->closeBtn->setText(m_closeText + QString(" (%1)").arg(m_closeTime));
-    }
+    changed = true;
+  }
+
+  if (changed) {
+    emit countdownChanged();
   }
 
   if (m_closeTime == 0 && m_dontShowAgainTime == 0) {
@@ -71,5 +83,14 @@ void NotificationDialog::timerEvent(QTimerEvent *event) {
   }
 }
 
-void NotificationDialog::on_dontShowAgainBtn_clicked() { done(DontShowAgain); }
-void NotificationDialog::on_closeBtn_clicked() { done(Normal); }
+void NotificationDialog::dismiss() {
+  if (m_closeTime == 0) {
+    done(Normal);
+  }
+}
+
+void NotificationDialog::dontShowAgain() {
+  if (m_dontShowAgainTime == 0) {
+    done(DontShowAgain);
+  }
+}

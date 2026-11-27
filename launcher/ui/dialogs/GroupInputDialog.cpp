@@ -1,58 +1,69 @@
 #include "GroupInputDialog.h"
-#include "ui/widgets/CustomTitleBar.h"
 
-#include <QLabel>
-#include <QPushButton>
+#include <QDebug>
+#include <QQuickWidget>
+#include <QUrl>
 #include <QVBoxLayout>
 
+#include "ui/GuiUtil.h"
+#include "ui/widgets/CustomTitleBar.h"
 
 GroupInputDialog::GroupInputDialog(const QString &title, const QString &label,
                                    const QString &initialText, QWidget *parent)
-    : QDialog(parent) {
-  setWindowFlags(Qt::FramelessWindowHint | windowFlags());
-  setWindowTitle(title);
+    : QDialog(parent),
+      m_title(title),
+      m_label(label),
+      m_textValue(initialText) {
+    setWindowFlags(Qt::FramelessWindowHint | windowFlags());
+    setWindowTitle(title);
+    resize(420, 240);
 
-  m_lineEdit = new QLineEdit(this);
-  m_lineEdit->setText(initialText);
-  connect(m_lineEdit, &QLineEdit::textChanged, this,
-          &GroupInputDialog::textChanged);
+    auto *mainLayout = new QVBoxLayout(this);
+    mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->setSpacing(0);
 
-  QLabel *textLabel = new QLabel(label, this);
-  textLabel->setBuddy(m_lineEdit);
+    auto *titleBar = new CustomTitleBar(this);
+    titleBar->setTitle(title);
+    mainLayout->addWidget(titleBar);
 
-  m_buttonBox = new QDialogButtonBox(
-      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, this);
-  connect(m_buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
-  connect(m_buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    auto *qmlWidget = new QQuickWidget(this);
+    qmlWidget->setObjectName(QStringLiteral("groupInputDialogQml"));
+    qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+    qmlWidget->setInitialProperties(
+        {{QStringLiteral("dialogController"),
+          QVariant::fromValue(static_cast<QObject *>(this))}});
 
-  QVBoxLayout *mainLayout = new QVBoxLayout(this);
-  mainLayout->setContentsMargins(0, 0, 0, 0);
-  mainLayout->setSpacing(0);
+    connect(qmlWidget, &QQuickWidget::statusChanged, this,
+            [qmlWidget](QQuickWidget::Status status) {
+                if (status == QQuickWidget::Error) {
+                    for (const auto &err : qmlWidget->errors()) {
+                        qCritical() << "GroupInputDialog QML error:" << err.toString();
+                    }
+                }
+            });
 
-  auto titleBar = new CustomTitleBar(this);
-  titleBar->setTitle(title);
-  mainLayout->addWidget(titleBar);
+    qmlWidget->setSource(QUrl(QStringLiteral("qrc:/qml/GroupInputDialog.qml")));
+    mainLayout->addWidget(qmlWidget);
 
-  QVBoxLayout *contentLayout = new QVBoxLayout();
-  contentLayout->setContentsMargins(10, 10, 10, 10);
-  contentLayout->setSpacing(10);
-  contentLayout->addWidget(textLabel);
-  contentLayout->addWidget(m_lineEdit);
-  contentLayout->addWidget(m_buttonBox);
-  mainLayout->addLayout(contentLayout);
-
-  textChanged(initialText);
-
-  if (!initialText.isEmpty()) {
-    m_lineEdit->selectAll();
-  }
+    GuiUtil::fitWindowToAvailableScreen(this, size());
 }
 
-QString GroupInputDialog::textValue() const {
-  return m_lineEdit->text().trimmed();
+GroupInputDialog::~GroupInputDialog() = default;
+
+void GroupInputDialog::setTextValue(const QString &text) {
+    if (m_textValue != text) {
+        m_textValue = text;
+        emit textValueChanged();
+        emit canAcceptChanged();
+    }
 }
 
-void GroupInputDialog::textChanged(const QString &text) {
-  m_buttonBox->button(QDialogButtonBox::Ok)
-      ->setEnabled(!text.trimmed().isEmpty());
+void GroupInputDialog::acceptDialog() {
+    if (canAccept()) {
+        accept();
+    }
+}
+
+void GroupInputDialog::rejectDialog() {
+    reject();
 }

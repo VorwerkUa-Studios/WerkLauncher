@@ -1,34 +1,30 @@
-/* Copyright 2013-2021 MultiMC Contributors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 #pragma once
 
 #include <QDialog>
-#include <net/NetJob.h>
-
-namespace Ui {
-class AboutDialog;
-}
+#include <QString>
 
 class AboutDialog : public QDialog {
-  Q_OBJECT
+    Q_OBJECT
+    Q_PROPERTY(QString launcherName READ launcherName CONSTANT)
+    Q_PROPERTY(QString versionString READ versionString CONSTANT)
+    Q_PROPERTY(QString platformString READ platformString CONSTANT)
+    Q_PROPERTY(QString channelString READ channelString CONSTANT)
+    Q_PROPERTY(QString creditsHtml READ creditsHtml CONSTANT)
+    Q_PROPERTY(QString licenseHtml READ licenseHtml CONSTANT)
+    Q_PROPERTY(QString urlString READ urlString CONSTANT)
 
 public:
-  explicit AboutDialog(QWidget *parent = 0);
-  ~AboutDialog();
+    explicit AboutDialog(QWidget *parent = nullptr);
+    ~AboutDialog() override;
 
-private:
-  Ui::AboutDialog *ui;
+    QString launcherName() const;
+    QString versionString() const;
+    QString platformString() const;
+    QString channelString() const;
+    QString creditsHtml() const;
+    QString licenseHtml() const;
+    QString urlString() const;
+
+    Q_INVOKABLE void showAboutQt();
+    Q_INVOKABLE void closeDialog();
 };

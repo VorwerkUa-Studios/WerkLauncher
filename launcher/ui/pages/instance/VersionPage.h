@@ -15,38 +15,48 @@
 
 #pragma once
 
-#include <QMainWindow>
+#include <QWidget>
+#include <QVariantList>
+#include <QVariantMap>
 
 #include "minecraft/MinecraftInstance.h"
 #include "minecraft/PackProfile.h"
 #include "ui/pages/BasePage.h"
 
-namespace Ui
-{
-class VersionPage;
-}
-
-class VersionPage : public QMainWindow, public BasePage
+class VersionPage : public QWidget, public BasePage
 {
     Q_OBJECT
+    Q_PROPERTY(QVariantList components READ components NOTIFY componentsChanged)
+    Q_PROPERTY(QVariantMap selectedComponent READ selectedComponent NOTIFY selectionChanged)
+    Q_PROPERTY(QVariantMap actionStates READ actionStates NOTIFY actionStatesChanged)
+    Q_PROPERTY(int selectedComponentIndex READ selectedComponentIndex NOTIFY selectionChanged)
+    Q_PROPERTY(QString filterText READ filterText WRITE setFilterText NOTIFY componentsChanged)
 
 public:
-    explicit VersionPage(MinecraftInstance *inst, QWidget *parent = 0);
-    virtual ~VersionPage();
-    virtual QString displayName() const override
-    {
-        return tr("Version");
-    }
-    virtual QIcon icon() const override;
-    virtual QString id() const override
-    {
-        return "version";
-    }
-    virtual QString helpPage() const override
-    {
-        return "Instance-Version";
-    }
-    virtual bool shouldDisplay() const override;
+    explicit VersionPage(MinecraftInstance *inst, QWidget *parent = nullptr);
+    ~VersionPage() override;
+
+    QString displayName() const override { return tr("Version"); }
+    QIcon icon() const override;
+    QString id() const override { return QStringLiteral("version"); }
+    QString helpPage() const override { return QStringLiteral("Instance-Version"); }
+    bool shouldDisplay() const override;
+
+    QVariantList components() const;
+    QVariantMap selectedComponent() const;
+    QVariantMap actionStates() const;
+    int selectedComponentIndex() const { return currentIdx; }
+    QString filterText() const { return m_filterText; }
+    void setFilterText(const QString &text);
+
+    Q_INVOKABLE void selectComponent(int sourceRow);
+    Q_INVOKABLE void setComponentEnabled(int sourceRow, bool enabled);
+    Q_INVOKABLE void triggerAction(const QString &actionName);
+
+signals:
+    void componentsChanged();
+    void selectionChanged();
+    void actionStatesChanged();
 
 private slots:
     void on_actionChange_version_triggered();
@@ -67,40 +77,26 @@ private slots:
     void on_actionInstall_mods_triggered();
     void on_actionCustomize_triggered();
     void on_actionDownload_All_triggered();
-
     void on_actionMinecraftFolder_triggered();
     void on_actionLibrariesFolder_triggered();
-
     void updateVersionControls();
-
-private:
-    Component * current();
-    int currentRow();
-    void updateButtons(int row = -1);
-    void preselect(int row = 0);
-    int doUpdate();
-
-protected:
-    QMenu * createPopupMenu() override;
-
-    /// FIXME: this shouldn't be necessary!
-    bool reloadPackProfile();
-
-private:
-    Ui::VersionPage *ui;
-    QSortFilterProxyModel *m_filterModel;
-    std::shared_ptr<PackProfile> m_profile;
-    MinecraftInstance *m_inst;
-    int currentIdx = 0;
-    bool controlsEnabled = false;
-
-public slots:
-    void versionCurrent(const QModelIndex &current, const QModelIndex &previous);
-
-private slots:
     void updateRunningStatus(bool running);
     void onGameUpdateError(QString error);
-    void packageCurrent(const QModelIndex &current, const QModelIndex &previous);
-    void showContextMenu(const QPoint &pos);
-    void onFilterTextChanged(const QString & newContents);
+
+private:
+    Component *current();
+    int currentRow() const;
+    QVariantMap componentData(int sourceRow) const;
+    void updateButtons();
+    void preselect(int row = 0);
+    bool reloadPackProfile();
+
+    std::shared_ptr<PackProfile> m_profile;
+    MinecraftInstance *m_inst;
+    int currentIdx = -1;
+    bool controlsEnabled = false;
+    bool supportsFabric = false;
+    bool supportsLiteLoader = false;
+    bool supportsNeoForge = false;
+    QString m_filterText;
 };

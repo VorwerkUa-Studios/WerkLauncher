@@ -15,16 +15,13 @@
 
 #pragma once
 
+#include <QVariantList>
 #include <QWidget>
+#include <memory>
 #include <QString>
 
 #include "ui/pages/BasePage.h"
 #include <Application.h>
-
-namespace Ui
-{
-class GameOptionsPage;
-}
 
 class GameOptions;
 class MinecraftInstance;
@@ -32,13 +29,11 @@ class MinecraftInstance;
 class GameOptionsPage : public QWidget, public BasePage
 {
     Q_OBJECT
+    Q_PROPERTY(QVariantList options READ options CONSTANT)
 
 public:
     explicit GameOptionsPage(MinecraftInstance *inst, QWidget *parent = 0);
-    virtual ~GameOptionsPage();
-
-    void openedImpl() override;
-    void closedImpl() override;
+    ~GameOptionsPage() override;
 
     virtual QString displayName() const override
     {
@@ -57,7 +52,8 @@ public:
         return "Game-Options-management";
     }
 
+    QVariantList options() const;
+
 private: // data
-    Ui::GameOptionsPage *ui = nullptr;
     std::shared_ptr<GameOptions> m_model;
 };

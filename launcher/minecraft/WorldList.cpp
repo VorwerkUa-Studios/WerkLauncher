@@ -161,7 +161,9 @@ QVariant WorldList::data(const QModelIndex &index, int role) const {
   case FolderRole: {
     return QDir::toNativeSeparators(dir().absoluteFilePath(world.folderName()));
   }
-    return QVariant::fromValue(world.seed());
+  case SeedRole: {
+    return QVariant::fromValue<qlonglong>(world.seed());
+  }
   case NameRole: {
     return world.name();
   }

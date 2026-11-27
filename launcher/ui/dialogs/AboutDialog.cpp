@@ -1,33 +1,19 @@
-/* Copyright 2013-2021 MultiMC Contributors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 #include "AboutDialog.h"
 #include "Application.h"
 #include "BuildConfig.h"
-#include "ui/widgets/CustomTitleBar.h"
-#include "ui_AboutDialog.h"
-#include <QIcon>
-
-#include <net/NetJob.h>
-
 #include "HoeDown.h"
+#include "ui/GuiUtil.h"
+#include "ui/widgets/CustomTitleBar.h"
+
+#include <QApplication>
+#include <QFile>
+#include <QLabel>
+#include <QQuickWidget>
+#include <QTextStream>
+#include <QUrl>
+#include <QVBoxLayout>
 
 namespace {
-// Credits
-// This is a hack, but I can't think of a better way to do this easily without
-// screwing with QTextDocument...
 QString getCreditsHtml(QStringList patrons) {
   QString output;
   QTextStream stream(&output);
@@ -35,21 +21,15 @@ QString getCreditsHtml(QStringList patrons) {
   stream.setCodec("UTF-8");
 #endif
   stream << "<center>\n";
-
-  stream << "<h3>" << QObject::tr("WerkLauncher Maintainers", "About Credits")
-         << "</h3>\n";
+  stream << "<h3>" << QObject::tr("WerkLauncher Maintainers", "About Credits") << "</h3>\n";
   stream << "<p>Vorwerkua Studio</p>\n";
-
-  stream << "<h3>" << QObject::tr("Original MultiMC Authors", "About Credits")
-         << "</h3>\n";
-  stream << "<p>Andrew Okin &lt;<a "
-            "href='mailto:forkk@forkk.net'>forkk@forkk.net</a>&gt;</p>\n";
-  stream << "<p>Petr Mr&aacute;zek &lt;<a "
-            "href='mailto:peterix@gmail.com'>peterix@gmail.com</a>&gt;</p>\n";
+  stream << "<h3>" << QObject::tr("Original MultiMC Authors", "About Credits") << "</h3>\n";
+  stream << "<p>Andrew Okin &lt;<a href='mailto:forkk@forkk.net'>forkk@forkk.net</a>&gt;</p>\n";
+  stream << "<p>Petr Mr&aacute;zek &lt;<a href='mailto:peterix@gmail.com'>peterix@gmail.com</a>&gt;</p>\n";
 
   if (!patrons.isEmpty()) {
     stream << "<h3>" << QObject::tr("Patrons", "About Credits") << "</h3>\n";
-    for (QString patron : patrons) {
+    for (const QString &patron : patrons) {
       stream << "<p>" << patron << "</p>\n";
     }
   }
@@ -65,70 +45,78 @@ QString getLicenseHtml() {
   QString output = hoedown.process(dataFile.readAll());
   return output;
 }
-
 } // namespace
 
 AboutDialog::AboutDialog(QWidget *parent)
-    : QDialog(parent), ui(new Ui::AboutDialog) {
+    : QDialog(parent) {
   setWindowFlags(Qt::FramelessWindowHint | windowFlags());
-  ui->setupUi(this);
+  setWindowTitle(tr("About %1").arg(BuildConfig.LAUNCHER_NAME));
+  resize(540, 580);
 
-  auto titleBar = new CustomTitleBar(this);
+  auto *mainLayout = new QVBoxLayout(this);
+  mainLayout->setContentsMargins(0, 0, 0, 0);
+  mainLayout->setSpacing(0);
+
+  auto *titleBar = new CustomTitleBar(this);
   titleBar->setTitle(tr("About %1").arg(BuildConfig.LAUNCHER_NAME));
-  ui->verticalLayout->setContentsMargins(0, 0, 0, 0);
-  ui->verticalLayout->setSpacing(0);
-  ui->verticalLayout->insertWidget(0, titleBar);
+  mainLayout->addWidget(titleBar);
 
-  QString launcherName = BuildConfig.LAUNCHER_NAME;
+  auto *qmlWidget = new QQuickWidget(this);
+  qmlWidget->setObjectName(QStringLiteral("aboutDialogQml"));
+  qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+  qmlWidget->setInitialProperties(
+      {{QStringLiteral("dialogController"),
+        QVariant::fromValue(static_cast<QObject *>(this))}});
 
-  setWindowTitle(tr("About %1").arg(launcherName));
+  connect(qmlWidget, &QQuickWidget::statusChanged, this,
+          [qmlWidget](QQuickWidget::Status status) {
+            if (status == QQuickWidget::Error) {
+              for (const auto &err : qmlWidget->errors()) {
+                qCritical() << "AboutDialog QML error:" << err.toString();
+              }
+            }
+          });
 
-  QString chtml = getCreditsHtml(QStringList());
-  ui->creditsText->setHtml(chtml);
+  qmlWidget->setSource(QUrl(QStringLiteral("qrc:/qml/AboutDialog.qml")));
+  mainLayout->addWidget(qmlWidget);
 
-  QString lhtml = getLicenseHtml();
-  ui->licenseText->setHtml(lhtml);
-
-  ui->urlLabel->setOpenExternalLinks(true);
-
-  ui->icon->setPixmap(APPLICATION->getThemedIcon("logo").pixmap(64));
-  ui->title->setText(launcherName);
-
-  ui->versionLabel->setText(tr("Version") + ": " +
-                            BuildConfig.printableVersionString());
-  ui->platformLabel->setText(tr("Platform") + ": " +
-                             BuildConfig.BUILD_PLATFORM);
-
-  if (BuildConfig.VERSION_BUILD >= 0)
-    ui->buildNumLabel->setText(tr("Build Number") + ": " +
-                               QString::number(BuildConfig.VERSION_BUILD));
-  else
-    ui->buildNumLabel->setVisible(false);
-
-  if (!BuildConfig.VERSION_CHANNEL.isEmpty())
-    ui->channelLabel->setText(tr("Channel") + ": " +
-                              BuildConfig.VERSION_CHANNEL);
-  else
-    ui->channelLabel->setVisible(false);
-
-  ui->redistributionText->setHtml(
-      tr("<p><b>WerkLauncher</b> is a fork of MultiMC and is heavily inspired "
-         "by it. We maintain it as an open-source project under the Apache "
-         "license.</p>\n"
-         "<p>This launcher is designed for the Werk community. It provides a "
-         "convenient way to manage Minecraft instances and mods.</p>\n"
-         "<p>For support, please join our Discord or Telegram chats.</p>"));
-
-  QString urlText(
-      "<html><head/><body><p><a href=\"%1\">%1</a></p></body></html>");
-  ui->urlLabel->setText(urlText.arg(BuildConfig.LAUNCHER_GIT));
-
-  QString copyText("© 2012-2026 %1");
-  ui->copyLabel->setText(copyText.arg(BuildConfig.LAUNCHER_COPYRIGHT));
-
-  connect(ui->closeButton, SIGNAL(clicked()), SLOT(close()));
-
-  connect(ui->aboutQt, &QPushButton::clicked, &QApplication::aboutQt);
+  GuiUtil::fitWindowToAvailableScreen(this, size());
 }
 
-AboutDialog::~AboutDialog() { delete ui; }
+AboutDialog::~AboutDialog() = default;
+
+QString AboutDialog::launcherName() const {
+  return BuildConfig.LAUNCHER_NAME;
+}
+
+QString AboutDialog::versionString() const {
+  return BuildConfig.printableVersionString();
+}
+
+QString AboutDialog::platformString() const {
+  return BuildConfig.BUILD_PLATFORM;
+}
+
+QString AboutDialog::channelString() const {
+  return BuildConfig.VERSION_CHANNEL;
+}
+
+QString AboutDialog::creditsHtml() const {
+  return getCreditsHtml(QStringList());
+}
+
+QString AboutDialog::licenseHtml() const {
+  return getLicenseHtml();
+}
+
+QString AboutDialog::urlString() const {
+  return BuildConfig.LAUNCHER_GIT;
+}
+
+void AboutDialog::showAboutQt() {
+  QApplication::aboutQt();
+}
+
+void AboutDialog::closeDialog() {
+  close();
+}

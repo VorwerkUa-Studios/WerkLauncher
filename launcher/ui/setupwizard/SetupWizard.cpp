@@ -29,6 +29,12 @@ SetupWizard::SetupWizard(QWidget *parent) : QWizard(parent) {
   retranslate();
 
   connect(this, &QWizard::currentIdChanged, this, &SetupWizard::pageChanged);
+  connect(button(QWizard::CustomButton1), &QAbstractButton::pressed, this, [this]() {
+    auto currentPage = getCurrentBasePage();
+    if (currentPage && currentPage->wantsRefreshButton()) {
+      currentPage->refresh();
+    }
+  });
 }
 
 void SetupWizard::resizeEvent(QResizeEvent *event) {
@@ -103,13 +109,6 @@ void SetupWizard::pageChanged(int id) {
     setButtonLayout({QWizard::CustomButton1, QWizard::Stretch,
                      QWizard::BackButton, QWizard::NextButton,
                      QWizard::FinishButton});
-    auto customButton = button(QWizard::CustomButton1);
-    connect(customButton, &QAbstractButton::pressed, [&]() {
-      auto basePagePtr = getCurrentBasePage();
-      if (basePagePtr) {
-        basePagePtr->refresh();
-      }
-    });
   } else {
     setButtonLayout({QWizard::Stretch, QWizard::BackButton, QWizard::NextButton,
                      QWizard::FinishButton});

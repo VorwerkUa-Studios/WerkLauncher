@@ -1,169 +1,152 @@
-/* Copyright 2013-2021 MultiMC Contributors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+#include "IconPickerDialog.h"
 
 #include <QFileDialog>
-#include <QKeyEvent>
-#include <QPushButton>
+#include <QLabel>
+#include <QQuickImageProvider>
+#include <QQuickWidget>
+#include <QQmlEngine>
+#include <QUrl>
+#include <QVBoxLayout>
 
 #include "Application.h"
-
-#include "IconPickerDialog.h"
-#include "ui/widgets/CustomTitleBar.h"
-#include "ui_IconPickerDialog.h"
-
-#include "ui/instanceview/InstanceDelegate.h"
-
+#include "DesktopServices.h"
 #include "icons/IconList.h"
 #include "icons/IconUtils.h"
-#include <DesktopServices.h>
+#include "ui/GuiUtil.h"
+#include "ui/widgets/CustomTitleBar.h"
+
+namespace {
+class DialogThemedIconProvider : public QQuickImageProvider {
+public:
+    DialogThemedIconProvider() : QQuickImageProvider(QQuickImageProvider::Pixmap) {}
+
+    QPixmap requestPixmap(const QString &id, QSize *size, const QSize &requestedSize) override {
+        QString cleanId = id;
+        int queryIndex = cleanId.indexOf('?');
+        if (queryIndex != -1) {
+            cleanId = cleanId.left(queryIndex);
+        }
+
+        QIcon icon = APPLICATION->getThemedIcon(cleanId);
+        if (icon.isNull()) {
+            icon = APPLICATION->icons()->getIcon(cleanId);
+        }
+        if (icon.isNull()) {
+            return QPixmap();
+        }
+        QSize actualSize = requestedSize.isValid() ? requestedSize : QSize(48, 48);
+        if (size) {
+            *size = actualSize;
+        }
+        return icon.pixmap(actualSize);
+    }
+};
+}
 
 IconPickerDialog::IconPickerDialog(QWidget *parent)
-    : QDialog(parent), ui(new Ui::IconPickerDialog) {
+    : QDialog(parent) {
   setWindowFlags(Qt::FramelessWindowHint | windowFlags());
-  ui->setupUi(this);
-
-  auto titleBar = new CustomTitleBar(this);
-  titleBar->setTitle(tr("Select Icon"));
-  ui->verticalLayout->setContentsMargins(0, 0, 0, 0);
-  ui->verticalLayout->setSpacing(0);
-  ui->verticalLayout->insertWidget(0, titleBar);
+  setWindowTitle(tr("Select Icon"));
+  resize(520, 480);
   setWindowModality(Qt::WindowModal);
 
-  auto contentsWidget = ui->iconView;
-  contentsWidget->setViewMode(QListView::IconMode);
-  contentsWidget->setFlow(QListView::LeftToRight);
-  contentsWidget->setIconSize(QSize(48, 48));
-  contentsWidget->setMovement(QListView::Static);
-  contentsWidget->setResizeMode(QListView::Adjust);
-  contentsWidget->setSelectionMode(QAbstractItemView::SingleSelection);
-  contentsWidget->setSpacing(5);
-  contentsWidget->setWordWrap(false);
-  contentsWidget->setWrapping(true);
-  contentsWidget->setUniformItemSizes(true);
-  contentsWidget->setTextElideMode(Qt::ElideRight);
-  contentsWidget->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
-  contentsWidget->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
-  contentsWidget->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-  contentsWidget->setItemDelegate(new ListViewDelegate());
+  auto *mainLayout = new QVBoxLayout(this);
+  mainLayout->setContentsMargins(0, 0, 0, 0);
+  mainLayout->setSpacing(0);
 
-  // contentsWidget->setAcceptDrops(true);
-  contentsWidget->setDropIndicatorShown(true);
-  contentsWidget->viewport()->setAcceptDrops(true);
-  contentsWidget->setDragDropMode(QAbstractItemView::DropOnly);
-  contentsWidget->setDefaultDropAction(Qt::CopyAction);
+  auto *titleBar = new CustomTitleBar(this);
+  titleBar->setTitle(tr("Select Icon"));
+  mainLayout->addWidget(titleBar);
 
-  contentsWidget->installEventFilter(this);
+  auto *qmlWidget = new QQuickWidget(this);
+  qmlWidget->setObjectName(QStringLiteral("iconPickerDialogQml"));
+  qmlWidget->engine()->addImageProvider(QLatin1String("themedicon"), new DialogThemedIconProvider());
+  qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+  qmlWidget->setInitialProperties(
+      {{QStringLiteral("dialogController"),
+        QVariant::fromValue(static_cast<QObject *>(this))}});
 
-  contentsWidget->setModel(APPLICATION->icons().get());
+  connect(qmlWidget, &QQuickWidget::statusChanged, this,
+          [qmlWidget](QQuickWidget::Status status) {
+            if (status == QQuickWidget::Error) {
+              for (const auto &err : qmlWidget->errors()) {
+                qCritical() << "IconPickerDialog QML error:" << err.toString();
+              }
+            }
+          });
 
-  // NOTE: ResetRole forces the button to be on the left, while the OK/Cancel
-  // ones are on the right. We win.
-  auto buttonAdd =
-      ui->buttonBox->addButton(tr("Add Icon"), QDialogButtonBox::ResetRole);
-  auto buttonRemove =
-      ui->buttonBox->addButton(tr("Remove Icon"), QDialogButtonBox::ResetRole);
+  qmlWidget->setSource(QUrl(QStringLiteral("qrc:/qml/IconPickerDialog.qml")));
+  mainLayout->addWidget(qmlWidget);
 
-  connect(buttonAdd, SIGNAL(clicked(bool)), SLOT(addNewIcon()));
-  connect(buttonRemove, SIGNAL(clicked(bool)), SLOT(removeSelectedIcon()));
-
-  connect(contentsWidget, SIGNAL(doubleClicked(QModelIndex)),
-          SLOT(activated(QModelIndex)));
-
-  connect(contentsWidget->selectionModel(),
-          SIGNAL(selectionChanged(QItemSelection, QItemSelection)),
-          SLOT(selectionChanged(QItemSelection, QItemSelection)));
-
-  auto buttonFolder =
-      ui->buttonBox->addButton(tr("Open Folder"), QDialogButtonBox::ResetRole);
-  connect(buttonFolder, &QPushButton::clicked, this,
-          &IconPickerDialog::openFolder);
+  GuiUtil::fitWindowToAvailableScreen(this, size());
 }
 
-bool IconPickerDialog::eventFilter(QObject *obj, QEvent *evt) {
-  if (obj != ui->iconView)
-    return QDialog::eventFilter(obj, evt);
-  if (evt->type() != QEvent::KeyPress) {
-    return QDialog::eventFilter(obj, evt);
+IconPickerDialog::~IconPickerDialog() = default;
+
+QStringList IconPickerDialog::iconKeys() const {
+  QStringList keys;
+  auto list = APPLICATION->icons();
+  if (list) {
+    for (int i = 0; i < list->rowCount(); ++i) {
+      QModelIndex idx = list->index(i);
+      keys.append(idx.data(Qt::UserRole).toString());
+    }
   }
-  QKeyEvent *keyEvent = static_cast<QKeyEvent *>(evt);
-  switch (keyEvent->key()) {
-  case Qt::Key_Delete:
-    removeSelectedIcon();
-    return true;
-  case Qt::Key_Plus:
-    addNewIcon();
-    return true;
-  default:
-    break;
+  return keys;
+}
+
+bool IconPickerDialog::canRemove() const {
+  auto list = APPLICATION->icons();
+  if (!list || selectedIconKey.isEmpty()) {
+    return false;
   }
-  return QDialog::eventFilter(obj, evt);
+  return list->iconFileExists(selectedIconKey);
 }
 
-void IconPickerDialog::addNewIcon() {
-  //: The title of the select icons open file dialog
-  QString selectIcons = tr("Select Icons");
-  //: The type of icon files
-  auto filter = IconUtils::getIconFilter();
-  QStringList fileNames = QFileDialog::getOpenFileNames(
-      this, selectIcons, QString(), tr("Icons %1").arg(filter));
-  APPLICATION->icons()->installIcons(fileNames);
-}
-
-void IconPickerDialog::removeSelectedIcon() {
-  APPLICATION->icons()->deleteIcon(selectedIconKey);
-}
-
-void IconPickerDialog::activated(QModelIndex index) {
-  selectedIconKey = index.data(Qt::UserRole).toString();
-  accept();
-}
-
-void IconPickerDialog::selectionChanged(QItemSelection selected,
-                                        QItemSelection deselected) {
-  if (selected.empty())
-    return;
-
-  QString key =
-      selected.first().indexes().first().data(Qt::UserRole).toString();
-  if (!key.isEmpty()) {
+void IconPickerDialog::setSelectedKey(const QString &key) {
+  if (selectedIconKey != key) {
     selectedIconKey = key;
+    emit selectedKeyChanged();
   }
 }
 
 int IconPickerDialog::execWithSelection(QString selection) {
-  auto list = APPLICATION->icons();
-  auto contentsWidget = ui->iconView;
-  selectedIconKey = selection;
-
-  int index_nr = list->getIconIndex(selection);
-  auto model_index = list->index(index_nr);
-  contentsWidget->selectionModel()->select(
-      model_index, QItemSelectionModel::Current | QItemSelectionModel::Select);
-
-  QMetaObject::invokeMethod(this, "delayed_scroll", Qt::QueuedConnection,
-                            Q_ARG(QModelIndex, model_index));
+  setSelectedKey(selection);
   return QDialog::exec();
 }
 
-void IconPickerDialog::delayed_scroll(QModelIndex model_index) {
-  auto contentsWidget = ui->iconView;
-  contentsWidget->scrollTo(model_index);
+void IconPickerDialog::addNewIcon() {
+  QString selectIcons = tr("Select Icons");
+  auto filter = IconUtils::getIconFilter();
+  QStringList fileNames = QFileDialog::getOpenFileNames(
+      this, selectIcons, QString(), tr("Icons %1").arg(filter));
+  if (!fileNames.isEmpty()) {
+    APPLICATION->icons()->installIcons(fileNames);
+    emit iconKeysChanged();
+  }
 }
 
-IconPickerDialog::~IconPickerDialog() { delete ui; }
+void IconPickerDialog::removeSelectedIcon() {
+  if (canRemove()) {
+    APPLICATION->icons()->deleteIcon(selectedIconKey);
+    setSelectedKey("default");
+    emit iconKeysChanged();
+  }
+}
 
 void IconPickerDialog::openFolder() {
   DesktopServices::openDirectory(APPLICATION->icons()->getDirectory());
+}
+
+void IconPickerDialog::chooseIcon(const QString &key) {
+  setSelectedKey(key);
+  accept();
+}
+
+void IconPickerDialog::acceptDialog() {
+  accept();
+}
+
+void IconPickerDialog::rejectDialog() {
+  reject();
 }

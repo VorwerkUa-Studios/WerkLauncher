@@ -62,6 +62,7 @@
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QQuickImageProvider>
+#include <QtWidgets/QStackedLayout>
 #include <QtWidgets/QVBoxLayout>
 
 #include "Application.h"
@@ -909,6 +910,7 @@ MainWindow::MainWindow(QWidget *parent)
 #endif
 
   ui->setupUi(this);
+  ui->horizontalLayout->setSizeConstraint(QLayout::SetNoConstraint);
 
   // Install global resize filter to handle frameless window resizing in pure Qt
   auto resizeFilter = new GlobalResizeFilter(this);
@@ -947,7 +949,56 @@ MainWindow::MainWindow(QWidget *parent)
   {
 
     m_pageStack = new QStackedWidget(ui->centralWidget);
+    m_pageStack->setMinimumSize(0, 0);
     ui->horizontalLayout->addWidget(m_pageStack);
+
+    auto *sidebarWidget = new QQuickWidget(ui->centralWidget);
+    sidebarWidget->setObjectName(QStringLiteral("qmlSidebarWidget"));
+    sidebarWidget->setFixedWidth(48);
+    sidebarWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+    sidebarWidget->engine()->addImageProvider(
+        QLatin1String("themedicon"), new ThemedIconProvider());
+    sidebarWidget->rootContext()->setContextProperty("launcherController", this);
+    auto *sidebarContainer = new QWidget(ui->centralWidget);
+    sidebarContainer->setFixedWidth(48);
+    auto *sidebarLayout = new QStackedLayout(sidebarContainer);
+    sidebarLayout->setContentsMargins(0, 0, 0, 0);
+    sidebarLayout->addWidget(sidebarWidget);
+    auto *sidebarErrorLabel = new QLabel(sidebarContainer);
+    sidebarErrorLabel->setAlignment(Qt::AlignCenter);
+    sidebarErrorLabel->setToolTip(tr("The navigation panel could not be loaded."));
+    sidebarLayout->addWidget(sidebarErrorLabel);
+    sidebarLayout->setCurrentWidget(sidebarWidget);
+
+    const auto showSidebarLoadError = [sidebarWidget, sidebarLayout,
+                                       sidebarErrorLabel]() {
+      QStringList details;
+      for (const auto &error : sidebarWidget->errors()) {
+        details.append(error.toString());
+      }
+      if (details.isEmpty()) {
+        details.append(QObject::tr("No QML diagnostic was provided."));
+      }
+      qCritical() << "Sidebar QML failed to load:" << details.join('\n');
+      sidebarErrorLabel->setText(QStringLiteral("!"));
+      sidebarErrorLabel->setToolTip(details.join('\n'));
+      sidebarLayout->setCurrentWidget(sidebarErrorLabel);
+    };
+    connect(sidebarWidget, &QQuickWidget::statusChanged, this,
+            [sidebarWidget, showSidebarLoadError](QQuickWidget::Status status) {
+              if (status == QQuickWidget::Error ||
+                  (status == QQuickWidget::Ready &&
+                   !sidebarWidget->rootObject())) {
+                showSidebarLoadError();
+              }
+            });
+    sidebarWidget->setSource(QUrl(QStringLiteral("qrc:/qml/Sidebar.qml")));
+    if (sidebarWidget->status() == QQuickWidget::Error ||
+        (sidebarWidget->status() == QQuickWidget::Ready &&
+         !sidebarWidget->rootObject())) {
+      showSidebarLoadError();
+    }
+    ui->horizontalLayout->insertWidget(0, sidebarContainer);
 
     m_instanceViewPage = new QWidget(m_pageStack);
     auto *verticalLayout = new QVBoxLayout(m_instanceViewPage);
@@ -1036,12 +1087,6 @@ MainWindow::MainWindow(QWidget *parent)
 
     view->installEventFilter(this);
 
-    view->setContextMenuPolicy(Qt::CustomContextMenu);
-
-    connect(view, &QWidget::customContextMenuRequested, this,
-
-            &MainWindow::showInstanceContextMenu);
-
     connect(view, &InstanceView::droppedURLs, this, &MainWindow::droppedURLs,
 
             Qt::QueuedConnection);
@@ -1081,17 +1126,71 @@ MainWindow::MainWindow(QWidget *parent)
 
     // ADD THE QML UI INSTEAD
     auto *qmlWidget = new QQuickWidget(m_instanceViewPage);
+    qmlWidget->setObjectName(QStringLiteral("mainQmlWidget"));
     qmlWidget->engine()->addImageProvider(QLatin1String("themedicon"), new ThemedIconProvider());
     qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
     qmlWidget->rootContext()->setContextProperty("launcherController", this);
     qmlWidget->rootContext()->setContextProperty("instanceModel", static_cast<QObject*>(proxymodel));
+
+    auto *qmlContainer = new QWidget(m_instanceViewPage);
+    auto *qmlStack = new QStackedLayout(qmlContainer);
+    qmlStack->setContentsMargins(0, 0, 0, 0);
+    qmlStack->addWidget(qmlWidget);
+    auto *qmlErrorLabel = new QLabel(qmlContainer);
+    qmlErrorLabel->setAlignment(Qt::AlignCenter);
+    qmlErrorLabel->setWordWrap(true);
+    qmlErrorLabel->setStyleSheet(
+        "QLabel { background: #1a1a1b; color: #ffffff; padding: 24px; }");
+    qmlStack->addWidget(qmlErrorLabel);
+    qmlStack->setCurrentWidget(qmlWidget);
+
+    const auto showQmlLoadError = [qmlWidget, qmlStack, qmlErrorLabel]() {
+      QStringList details;
+      for (const auto &error : qmlWidget->errors()) {
+        details.append(error.toString());
+      }
+      if (details.isEmpty()) {
+        details.append(QObject::tr("No QML diagnostic was provided."));
+      }
+      qCritical() << "Main QML failed to load:" << details.join('\n');
+      qmlErrorLabel->setText(
+          QObject::tr("The launcher interface could not be loaded:\n\n%1")
+              .arg(details.join('\n')));
+      qmlStack->setCurrentWidget(qmlErrorLabel);
+    };
+    connect(qmlWidget, &QQuickWidget::statusChanged, this,
+            [qmlWidget, showQmlLoadError](QQuickWidget::Status status) {
+              if (status == QQuickWidget::Error) {
+                showQmlLoadError();
+              } else if (status == QQuickWidget::Ready &&
+                         !qmlWidget->rootObject()) {
+                showQmlLoadError();
+              }
+            });
     qmlWidget->setSource(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
+    if (qmlWidget->status() == QQuickWidget::Error ||
+        (qmlWidget->status() == QQuickWidget::Ready &&
+         !qmlWidget->rootObject())) {
+      showQmlLoadError();
+    }
     
     // Pass focus and add to layout
     qmlWidget->setFocusPolicy(Qt::StrongFocus);
-    verticalLayout->addWidget(qmlWidget);
+    verticalLayout->addWidget(qmlContainer);
 
     m_pageStack->addWidget(m_instanceViewPage);
+
+    const auto updateNavigationControls = [this](int currentIndex) {
+      ui->actionBack->setVisible(false);
+      ui->mainToolBar->hide();
+      const bool showPageStatus =
+          m_pageStack->widget(currentIndex) != m_instanceViewPage;
+      ui->statusBar->setVisible(showPageStatus);
+      emit navigationChanged();
+    };
+    connect(m_pageStack, &QStackedWidget::currentChanged, this,
+            updateNavigationControls);
+    updateNavigationControls(m_pageStack->currentIndex());
   }
 
   // Back button connection
@@ -1151,40 +1250,6 @@ MainWindow::MainWindow(QWidget *parent)
 
           &MainWindow::globalSettingsClosed);
 
-  // Add "manage accounts" button, right align
-
-  QWidget *spacer = new QWidget();
-
-  spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-
-  ui->mainToolBar->addWidget(spacer);
-
-  accountMenu = new QMenu(this);
-
-  repopulateAccountsMenu();
-
-  accountMenuButton = new QToolButton(this);
-
-  accountMenuButton->setMenu(accountMenu);
-
-  accountMenuButton->setPopupMode(QToolButton::InstantPopup);
-
-  accountMenuButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
-  accountMenuButton->setIconSize(QSize(32, 32));
-
-  accountMenuButton->setIcon(APPLICATION->getThemedIcon("accounts"));
-
-  QWidgetAction *accountMenuButtonAction = new QWidgetAction(this);
-
-  accountMenuButtonAction->setDefaultWidget(accountMenuButton);
-
-  ui->mainToolBar->addAction(accountMenuButtonAction);
-
-  QWidget *bottomSpacer = new QWidget(this);
-  bottomSpacer->setFixedSize(1, 15);
-  ui->mainToolBar->addWidget(bottomSpacer);
-  // Update the menu when the active account changes.
-
   connect(APPLICATION->accounts().get(), &AccountList::defaultAccountChanged,
 
           this, &MainWindow::defaultAccountChanged);
@@ -1192,10 +1257,6 @@ MainWindow::MainWindow(QWidget *parent)
   connect(APPLICATION->accounts().get(), &AccountList::accountChanged, this,
 
           &MainWindow::defaultAccountChanged);
-
-  connect(APPLICATION->accounts().get(), &AccountList::listChanged, this,
-
-          &MainWindow::repopulateAccountsMenu);
 
   // Show initial account
 
@@ -1311,33 +1372,16 @@ MainWindow::MainWindow(QWidget *parent)
 }
 
 void MainWindow::retranslateUi() {
-
-  auto accounts = APPLICATION->accounts();
-
-  MinecraftAccountPtr defaultAccount = accounts->defaultAccount();
-
-  if (defaultAccount) {
-
-    auto profileLabel = profileInUseFilter(defaultAccount->profileName(),
-
-                                           defaultAccount->gamerTag(),
-
-                                           defaultAccount->isInUse());
-
-    accountMenuButton->setToolTip(profileLabel);
-
-  } else {
-
-    accountMenuButton->setToolTip(tr("Accounts"));
-  }
-
   if (m_selectedInstance) {
 
   } else {
   }
 
-  if (auto qmlWidget = this->findChild<QQuickWidget *>()) {
-    qmlWidget->engine()->retranslate();
+  for (const auto &objectName :
+       {QStringLiteral("mainQmlWidget"), QStringLiteral("qmlSidebarWidget")}) {
+    if (auto qmlWidget = this->findChild<QQuickWidget *>(objectName)) {
+      qmlWidget->engine()->retranslate();
+    }
   }
 
   ui->retranslateUi(this);
@@ -1364,28 +1408,31 @@ void MainWindow::konamiTriggered() {
 }
 
 void MainWindow::showInstanceView() {
+  const QSize windowSize = size();
   QWidget *current = m_pageStack->currentWidget();
-  if (current == m_instanceViewPage) return;
-
-  if (current) {
-    bool isAlreadyClosing = current->property("isClosing").toBool();
-    if (!isAlreadyClosing) {
-      current->setProperty("isClosing", true);
-      if (!current->close()) {
-        current->setProperty("isClosing", false);
-        return;
+  if (current != m_instanceViewPage) {
+    if (current) {
+      bool isAlreadyClosing = current->property("isClosing").toBool();
+      if (!isAlreadyClosing) {
+        current->setProperty("isClosing", true);
+        if (!current->close()) {
+          current->setProperty("isClosing", false);
+          return;
+        }
+      }
+      m_pageStack->removeWidget(current);
+      if (!current->testAttribute(Qt::WA_DeleteOnClose)) {
+        current->deleteLater();
       }
     }
-    m_pageStack->removeWidget(current);
-    if (!current->testAttribute(Qt::WA_DeleteOnClose)) {
-      current->deleteLater();
-    }
+    m_pageStack->setCurrentWidget(m_instanceViewPage);
   }
+  resize(windowSize);
 
-  m_pageStack->setCurrentWidget(m_instanceViewPage);
   ui->actionBack->setVisible(false);
   ui->mainToolBar->hide();
   ui->statusBar->hide();
+  emit navigationChanged();
 
   QString winTitle = tr("%1 - Version %2", "Launcher - Version X")
                        .arg(BuildConfig.LAUNCHER_DISPLAYNAME,
@@ -1398,19 +1445,27 @@ void MainWindow::showInstanceView() {
 }
 
 void MainWindow::showPage(QWidget *page) {
+  const QSize windowSize = size();
   if (m_pageStack->indexOf(page) == -1) {
     m_pageStack->addWidget(page);
   }
   m_pageStack->setCurrentWidget(page);
-  ui->actionBack->setVisible(true);
-  ui->mainToolBar->show();
+  resize(windowSize);
+  ui->actionBack->setVisible(false);
+  ui->mainToolBar->hide();
   ui->statusBar->show();
+  emit navigationChanged();
 
   if (page->windowTitle().isEmpty()) {
      m_titleBar->setTitle(BuildConfig.LAUNCHER_DISPLAYNAME);
   } else {
      m_titleBar->setTitle(QString("%1 / %2").arg(BuildConfig.LAUNCHER_DISPLAYNAME, page->windowTitle()));
   }
+
+}
+
+bool MainWindow::canGoBack() const {
+  return m_pageStack && m_pageStack->currentWidget() != m_instanceViewPage;
 }
 
 QString MainWindow::getWallpaper() const {
@@ -1501,204 +1556,113 @@ QString MainWindow::getThemedIconUrl(const QString &name) const {
     return "image://themedicon/" + name;
 }
 
+void MainWindow::on_actionViewCentralModsFolder_triggered() {
+  DesktopServices::openDirectory(
+      APPLICATION->settings()->get("CentralModsDir").toString());
+}
+
+bool MainWindow::hasStatisticsAction() const {
+  return !BuildConfig.BUG_TRACKER_URL.isEmpty();
+}
+
+bool MainWindow::hasDiscordAction() const {
+  return !BuildConfig.DISCORD_URL.isEmpty();
+}
+
+QString MainWindow::getAboutMenuLabel() const {
+  return tr("About %1").arg(BuildConfig.LAUNCHER_NAME);
+}
+
 QString MainWindow::getThemeName() const {
     return APPLICATION->settings()->get("ApplicationTheme").toString();
 }
 
-void MainWindow::showInstanceContextMenu(const QPoint &pos) {
+QVariantList MainWindow::getAccountMenuItems() const {
+  QVariantList items;
+  const auto accounts = APPLICATION->accounts();
+  const auto defaultAccount = accounts->defaultAccount();
 
-  QList<QAction *> actions;
-
-  QAction *actionSep = new QAction("", this);
-
-  actionSep->setSeparator(true);
-
-  bool onInstance = view->indexAt(pos).isValid();
-
-  if (onInstance) {
-    actions.append(ui->actionChangeInstIcon.operator->());
-    actions.append(actionSep);
-    actions.append(ui->actionChangeInstGroup.operator->());
-    actions.append(actionSep);
-    actions.append(ui->actionEditInstance.operator->());
-    actions.append(actionSep);
-    actions.append(ui->actionViewSelectedMCFolder.operator->());
-    actions.append(ui->actionConfig_Folder.operator->());
-    actions.append(actionSep);
-    actions.append(ui->actionCreateShortcut.operator->());
-    actions.append(ui->actionExportInstance.operator->());
-    actions.append(ui->actionDeleteInstance.operator->());
-    actions.append(ui->actionCopyInstance.operator->());
-
-    QAction *actionVoid = new QAction(m_selectedInstance->name(), this);
-    actionVoid->setEnabled(false);
-    actions.prepend(actionVoid);
-    actions.prepend(actionSep);
-  } else {
-
-    auto group = view->groupNameAt(pos);
-
-    QAction *actionVoid = new QAction(BuildConfig.LAUNCHER_NAME, this);
-
-    actionVoid->setEnabled(false);
-
-    QAction *actionCreateInstance = new QAction(tr("Create instance"), this);
-
-    actionCreateInstance->setToolTip(ui->actionAddInstance->toolTip());
-
-    if (!group.isNull()) {
-
-      QVariantMap data;
-
-      data["group"] = group;
-
-      actionCreateInstance->setData(data);
+  for (int index = 0; index < accounts->count(); ++index) {
+    const auto entry = accounts->at(index);
+    if (!entry.isAccount || !entry.account) {
+      continue;
     }
 
-    connect(actionCreateInstance, SIGNAL(triggered(bool)),
+    QVariantMap item;
+    item.insert("index", index);
+    item.insert("text", profileInUseFilter(entry.account->profileName(),
+                                           entry.account->gamerTag(),
+                                           entry.account->isInUse()));
+    item.insert("checked", defaultAccount == entry.account);
 
-            SLOT(on_actionAddInstance_triggered()));
-
-    actions.prepend(actionSep);
-
-    actions.prepend(actionVoid);
-
-    actions.append(actionCreateInstance);
-
-    if (!group.isNull()) {
-
-      QAction *actionDeleteGroup =
-
-          new QAction(tr("Delete group '%1'").arg(group), this);
-
-      QVariantMap data;
-
-      data["group"] = group;
-
-      actionDeleteGroup->setData(data);
-
-      connect(actionDeleteGroup, SIGNAL(triggered(bool)), SLOT(deleteGroup()));
-
-      actions.append(actionDeleteGroup);
-
+    const auto face = entry.account->getFace();
+    if (face.isNull()) {
+      item.insert("icon", getThemedIconUrl("noaccount"));
     } else {
-
-      QAction *actionCreateGroup = new QAction(tr("Create group"), this);
-
-      connect(actionCreateGroup, &QAction::triggered, this, [this]() {
-        GroupInputDialog dialog(tr("Create group"), tr("Group name:"), QString(), this);
-        if (dialog.exec() == QDialog::Accepted) {
-          QString name = dialog.textValue();
-          if (!name.isEmpty()) {
-            APPLICATION->instances()->addGroup(name);
-          }
-        }
-      });
-
-      actions.append(actionCreateGroup);
-    }
-  }
-
-  QMenu myMenu;
-
-  myMenu.addActions(actions);
-
-  /*
-
-  if (onInstance)
-
-      myMenu.setEnabled(m_selectedInstance->canLaunch());
-
-  */
-
-  myMenu.exec(QCursor::pos());
-}
-
-void MainWindow::showHelpMenu() {
-  QMenu helpMenu;
-  helpMenu.addAction(ui->actionStatistics);
-  helpMenu.addAction(ui->actionDonatello);
-  helpMenu.addAction(ui->actionDISCORD);
-  helpMenu.addAction(ui->actionTELEGRAM);
-  helpMenu.addSeparator();
-  helpMenu.addAction(ui->actionAbout);
-  helpMenu.exec(QCursor::pos());
-}
-
-void MainWindow::showInstanceContextMenuFromQml() {
-  if (!m_selectedInstance) return;
-
-  QMenu myMenu;
-
-  QAction *actionVoid = new QAction(m_selectedInstance->name(), &myMenu);
-  actionVoid->setEnabled(false);
-  myMenu.addAction(actionVoid);
-  myMenu.addSeparator();
-  myMenu.addAction(ui->actionChangeInstIcon.operator->());
-  myMenu.addSeparator();
-  myMenu.addAction(ui->actionChangeInstGroup.operator->());
-  myMenu.addSeparator();
-  myMenu.addAction(ui->actionEditInstance.operator->());
-  myMenu.addSeparator();
-  myMenu.addAction(ui->actionViewSelectedMCFolder.operator->());
-  myMenu.addAction(ui->actionConfig_Folder.operator->());
-  myMenu.addSeparator();
-  myMenu.addAction(ui->actionCreateShortcut.operator->());
-  myMenu.addAction(ui->actionExportInstance.operator->());
-  myMenu.addAction(ui->actionDeleteInstance.operator->());
-  myMenu.addAction(ui->actionCopyInstance.operator->());
-
-  myMenu.exec(QCursor::pos());
-}
-
-void MainWindow::showEmptySpaceContextMenu() {
-  QMenu myMenu;
-
-  QAction *actionVoid = new QAction(BuildConfig.LAUNCHER_NAME, this);
-  actionVoid->setEnabled(false);
-  myMenu.addAction(actionVoid);
-  myMenu.addSeparator();
-
-  QAction *actionCreateInstance = new QAction(tr("Create instance"), this);
-  actionCreateInstance->setToolTip(ui->actionAddInstance->toolTip());
-  connect(actionCreateInstance, SIGNAL(triggered(bool)),
-          SLOT(on_actionAddInstance_triggered()));
-  myMenu.addAction(actionCreateInstance);
-
-  QAction *actionCreateGroup = new QAction(tr("Create group"), this);
-  connect(actionCreateGroup, &QAction::triggered, this, [this]() {
-    GroupInputDialog dialog(tr("Create group"), tr("Group name:"), QString(), this);
-    if (dialog.exec() == QDialog::Accepted) {
-      QString name = dialog.textValue();
-      if (!name.isEmpty()) {
-        APPLICATION->instances()->addGroup(name);
+      QByteArray imageData;
+      QBuffer buffer(&imageData);
+      buffer.open(QIODevice::WriteOnly);
+      if (!face.save(&buffer, "PNG")) {
+        qWarning() << "Failed to serialize account avatar for QML menu";
+        item.insert("icon", getThemedIconUrl("noaccount"));
+      } else {
+        item.insert("icon", "data:image/png;base64," +
+                                 QString::fromLatin1(imageData.toBase64()));
       }
     }
-  });
-  myMenu.addAction(actionCreateGroup);
+    items.append(item);
+  }
 
-  myMenu.exec(QCursor::pos());
+  return items;
 }
 
-void MainWindow::showGroupContextMenu(const QString &group) {
-  if (group.isEmpty()) {
+bool MainWindow::hasDefaultAccount() const {
+  return bool(APPLICATION->accounts()->defaultAccount());
+}
+
+void MainWindow::setDefaultAccount(int index) {
+  const auto accounts = APPLICATION->accounts();
+  if (index < -1 || index >= accounts->count() ||
+      (index >= 0 && !accounts->at(index).isAccount)) {
+    qWarning() << "Ignoring invalid account index from QML menu:" << index;
     return;
   }
 
-  QMenu menu(this);
-  auto *createInstance = menu.addAction(tr("Create instance"));
-  QVariantMap createData;
-  createData.insert("group", group);
-  createInstance->setData(createData);
-  connect(createInstance, &QAction::triggered, this,
-          &MainWindow::on_actionAddInstance_triggered);
+  accounts->setDefaultAccount(index == -1 ? nullptr
+                                           : accounts->at(index).account);
+}
 
-  auto *deleteAction = menu.addAction(tr("Delete group '%1'").arg(group));
-  QVariantMap deleteData;
-  deleteData.insert("group", group);
-  deleteAction->setData(deleteData);
-  connect(deleteAction, &QAction::triggered, this, &MainWindow::deleteGroup);
-  menu.exec(QCursor::pos());
+void MainWindow::addInstanceToGroup(const QString &group) {
+  if (group.isEmpty() || !APPLICATION->instances()->getGroups().contains(group)) {
+    qWarning() << "Ignoring invalid group from QML menu:" << group;
+    return;
+  }
+  addInstance(QString(), group);
+}
+
+void MainWindow::createGroupFromQml() {
+  GroupInputDialog dialog(tr("Create group"), tr("Group name:"), QString(), this);
+  if (dialog.exec() != QDialog::Accepted) {
+    return;
+  }
+
+  const QString name = dialog.textValue().simplified();
+  if (!name.isEmpty()) {
+    APPLICATION->instances()->addGroup(name);
+  }
+}
+
+void MainWindow::deleteGroupFromQml(const QString &group) {
+  confirmDeleteGroup(group);
+}
+
+void MainWindow::exportSelectedInstanceToModrinth() {
+  if (!m_selectedInstance) {
+    return;
+  }
+
+  ModrinthExportDialog dialog(m_selectedInstance, this);
+  dialog.exec();
 }
 
 void MainWindow::searchTextChanged(const QString &text) {
@@ -1845,111 +1809,6 @@ void MainWindow::updateToolsMenu() {
   ui->actionLaunchInstance->setMenu(launchMenu);
 }
 
-void MainWindow::repopulateAccountsMenu() {
-
-  accountMenu->clear();
-
-  auto accounts = APPLICATION->accounts();
-
-  MinecraftAccountPtr defaultAccount = accounts->defaultAccount();
-
-  QString active_profileId = "";
-
-  if (defaultAccount) {
-
-    // this can be called before accountMenuButton exists
-
-    if (accountMenuButton) {
-
-      auto profileLabel = profileInUseFilter(defaultAccount->profileName(),
-
-                                             defaultAccount->gamerTag(),
-
-                                             defaultAccount->isInUse());
-
-      accountMenuButton->setToolTip(profileLabel);
-    }
-  }
-
-  if (accounts->count() <= 0) {
-
-    QAction *action = new QAction(tr("No accounts added!"), this);
-
-    action->setEnabled(false);
-
-    accountMenu->addAction(action);
-
-  } else {
-
-    // TODO: Nicer way to iterate?
-
-    for (int i = 0; i < accounts->count(); i++) {
-
-      auto entry = accounts->at(i);
-
-      if (!entry.isAccount) {
-
-        continue;
-      }
-
-      auto account = entry.account;
-
-      auto profileLabel = profileInUseFilter(
-
-          account->profileName(), account->gamerTag(), account->isInUse());
-
-      QAction *action = new QAction(profileLabel, this);
-
-      action->setData(i);
-
-      action->setCheckable(true);
-
-      if (defaultAccount == account) {
-
-        action->setChecked(true);
-      }
-
-      auto face = account->getFace();
-
-      if (!face.isNull()) {
-
-        action->setIcon(face);
-
-      } else {
-
-        action->setIcon(APPLICATION->getThemedIcon("noaccount"));
-      }
-
-      accountMenu->addAction(action);
-
-      connect(action, SIGNAL(triggered(bool)), SLOT(changeActiveAccount()));
-    }
-  }
-
-  accountMenu->addSeparator();
-
-  QAction *action = new QAction(tr("No Default Account"), this);
-
-  action->setCheckable(true);
-
-  action->setIcon(APPLICATION->getThemedIcon("noaccount"));
-
-  action->setData(-1);
-
-  if (!defaultAccount) {
-
-    action->setChecked(true);
-  }
-
-  accountMenu->addAction(action);
-
-  connect(action, SIGNAL(triggered(bool)), SLOT(changeActiveAccount()));
-
-  accountMenu->addSeparator();
-
-  accountMenu->addAction(ui->actionManageAccounts);
-}
-
 void MainWindow::updatesAllowedChanged(bool allowed) {
 
   if (!BuildConfig.UPDATER_ENABLED) {
@@ -1966,49 +1825,14 @@ void MainWindow::updatesAllowedChanged(bool allowed) {
 
  */
 
-void MainWindow::changeActiveAccount() {
-
-  QAction *sAction = (QAction *)sender();
-
-  // Profile's associated Mojang username
-
-  if (sAction->data().type() != QVariant::Type::Int)
-
-    return;
-
-  QVariant data = sAction->data();
-
-  bool valid = false;
-
-  int index = data.toInt(&valid);
-
-  if (!valid) {
-
-    index = -1;
-  }
-
-  auto accounts = APPLICATION->accounts();
-
-  accounts->setDefaultAccount(index == -1 ? nullptr
-
-                                          : accounts->at(index).account);
-
-  defaultAccountChanged();
-}
-
 void MainWindow::defaultAccountChanged() {
-
-  repopulateAccountsMenu();
 
   MinecraftAccountPtr account = APPLICATION->accounts()->defaultAccount();
 
   if (!account) {
 
-    accountMenuButton->setIcon(APPLICATION->getThemedIcon("accounts"));
     m_accountIconUrl = "";
     emit accountIconChanged();
-
-    accountMenuButton->setToolTip(tr("Accounts"));
 
     return;
   }
@@ -2019,22 +1843,13 @@ void MainWindow::defaultAccountChanged() {
 
                           ToastNotification::Success);
 
-  auto profileLabel = profileInUseFilter(
-
-      account->profileName(), account->gamerTag(), account->isInUse());
-
-  accountMenuButton->setToolTip(profileLabel);
-
   auto face = account->getFace();
 
   if (face.isNull()) {
 
-    accountMenuButton->setIcon(APPLICATION->getThemedIcon("accounts"));
     m_accountIconUrl = "";
 
   } else {
-
-    accountMenuButton->setIcon(face);
     
     QByteArray byteArray;
     QBuffer buffer(&byteArray);
@@ -2387,33 +2202,19 @@ void MainWindow::finalizeInstance(InstancePtr inst) {
   }
 }
 
-void MainWindow::addInstance(QString url) {
+void MainWindow::addInstance(QString url, QString forcedGroup) {
+  QString groupName = forcedGroup;
 
-  QString groupName;
-
-  do {
-
+  if (groupName.isEmpty()) {
     QObject *obj = sender();
-
-    if (!obj)
-
-      break;
-
     QAction *action = qobject_cast<QAction *>(obj);
-
-    if (!action)
-
-      break;
-
-    auto map = action->data().toMap();
-
-    if (!map.contains("group"))
-
-      break;
-
-    groupName = map["group"].toString();
-
-  } while (0);
+    if (action) {
+      const auto data = action->data().toMap();
+      if (data.contains("group")) {
+        groupName = data.value("group").toString();
+      }
+    }
+  }
 
   if (groupName.isEmpty()) {
 
@@ -2656,22 +2457,21 @@ void MainWindow::deleteGroup() {
 
     return;
 
-  QString groupName = map["group"].toString();
+  confirmDeleteGroup(map.value("group").toString());
+}
 
-  if (!groupName.isEmpty()) {
+void MainWindow::confirmDeleteGroup(const QString &groupName) {
+  if (groupName.isEmpty()) {
+    return;
+  }
 
-    auto reply = QMessageBox::question(
+  const auto reply = QMessageBox::question(
+      this, tr("Delete group"),
+      tr("Are you sure you want to delete the group %1").arg(groupName),
+      QMessageBox::Yes | QMessageBox::No);
 
-        this, tr("Delete group"),
-
-        tr("Are you sure you want to delete the group %1").arg(groupName),
-
-        QMessageBox::Yes | QMessageBox::No);
-
-    if (reply == QMessageBox::Yes) {
-
-      APPLICATION->instances()->deleteGroup(groupName);
-    }
+  if (reply == QMessageBox::Yes) {
+    APPLICATION->instances()->deleteGroup(groupName);
   }
 }
 
@@ -2963,7 +2763,7 @@ void MainWindow::changeEvent(QEvent *event) {
 
     if (isMaximized()) {
 #ifdef Q_OS_WIN
-      this->setContentsMargins(8, 8, 8, 8);
+      this->setContentsMargins(0, 8, 8, 8);
 #endif
     } else {
       this->setContentsMargins(0, 0, 0, 0);

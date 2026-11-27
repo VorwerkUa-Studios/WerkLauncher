@@ -41,6 +41,7 @@
 #include "ui/pages/modplatform/werk/WerkModpacksPage.h"
 #include "ui/pages/modplatform/curseforge/CurseForgePage.h"
 #include "ui/widgets/PageContainer.h"
+#include "ui/GuiUtil.h"
 
 NewInstanceDialog::NewInstanceDialog(const QString &initialGroup,
                                      const QString &url, QWidget *parent)
@@ -137,7 +138,7 @@ NewInstanceDialog::NewInstanceDialog(const QString &initialGroup,
 
   updateDialogState();
 
-  resize(900, 650);
+  GuiUtil::fitWindowToAvailableScreen(this, QSize(900, 650));
 }
 
 void NewInstanceDialog::reject() {

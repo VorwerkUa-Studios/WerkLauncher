@@ -15,24 +15,21 @@
 
 #pragma once
 
+#include <QString>
 #include <QWidget>
 
 #include "BaseInstance.h"
 #include "ui/pages/BasePage.h"
 #include <Application.h>
 
-namespace Ui
-{
-class NotesPage;
-}
-
 class NotesPage : public QWidget, public BasePage
 {
     Q_OBJECT
+    Q_PROPERTY(QString noteText READ noteText WRITE setNoteText NOTIFY noteTextChanged)
 
 public:
     explicit NotesPage(BaseInstance *inst, QWidget *parent = 0);
-    virtual ~NotesPage();
+    ~NotesPage() override;
     virtual QString displayName() const override
     {
         return tr("Notes");
@@ -54,7 +51,13 @@ public:
         return "Notes";
     }
 
+    QString noteText() const { return m_noteText; }
+    void setNoteText(const QString &text);
+
+signals:
+    void noteTextChanged();
+
 private:
-    Ui::NotesPage *ui;
     BaseInstance *m_inst;
+    QString m_noteText;
 };

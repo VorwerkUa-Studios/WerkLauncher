@@ -1,18 +1,12 @@
 #pragma once
-/*
- * Copyright 2024 Petr Mrázek
- *
- * This source is subject to the Microsoft Permissive License (MS-PL).
- * Please see the COPYING.md file for more information.
- */
 
 #include <QDialog>
 #include <QString>
 
-
-class OfflineNameDialog : public QDialog
-{
+class OfflineNameDialog : public QDialog {
     Q_OBJECT
+    Q_PROPERTY(QString textValue READ textValue WRITE setTextValue NOTIFY textValueChanged)
+    Q_PROPERTY(bool canAccept READ canAccept NOTIFY canAcceptChanged)
 
 public:
     enum OfflineNameDialogCode {
@@ -21,20 +15,22 @@ public:
         OnlineRequested,
     };
 
-    OfflineNameDialog(QString current_name, QWidget * parent = nullptr);
-    virtual ~OfflineNameDialog() = default;
+    explicit OfflineNameDialog(QString current_name, QWidget *parent = nullptr);
+    ~OfflineNameDialog() override;
 
-    QString textValue() const;
+    QString textValue() const { return m_textValue.trimmed(); }
+    void setTextValue(const QString &text);
 
-public slots:
-    void accept() override;
+    bool canAccept() const { return !m_textValue.trimmed().isEmpty(); }
 
-private slots:
-    void textChanged(const QString& text);
-    void retryOnline();
+    Q_INVOKABLE void acceptDialog();
+    Q_INVOKABLE void rejectDialog();
+    Q_INVOKABLE void retryOnline();
+
+signals:
+    void textValueChanged();
+    void canAcceptChanged();
 
 private:
-    class QDialogButtonBox * m_buttonBox;
-    class QLineEdit* m_lineEdit;
-    bool m_acceptEnabled = false;
+    QString m_textValue;
 };

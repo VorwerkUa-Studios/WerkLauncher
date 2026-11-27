@@ -15,22 +15,29 @@
 
 #pragma once
 
-#include <QMainWindow>
+#include <QList>
+#include <QSet>
+#include <QString>
+#include <QVariantList>
+#include <QVariantMap>
+#include <QWidget>
+#include <memory>
 
 #include "minecraft/MinecraftInstance.h"
 #include "ui/pages/BasePage.h"
 
-#include <Application.h>
-
 class ModFolderModel;
-namespace Ui
-{
-class ModFolderPage;
-}
 
-class ModFolderPage : public QMainWindow, public BasePage
+class ModFolderPage : public QWidget, public BasePage
 {
     Q_OBJECT
+    Q_PROPERTY(QString pageTitle READ displayName CONSTANT)
+    Q_PROPERTY(QVariantList items READ items NOTIFY itemsChanged)
+    Q_PROPERTY(QVariantMap selectedMod READ selectedMod NOTIFY selectionChanged)
+    Q_PROPERTY(QVariantMap actionStates READ actionStates NOTIFY actionStatesChanged)
+    Q_PROPERTY(QString filterText READ filterText WRITE setFilterText NOTIFY itemsChanged)
+    Q_PROPERTY(QString sortMode READ sortMode WRITE setSortMode NOTIFY itemsChanged)
+    Q_PROPERTY(bool sortDescending READ sortDescending WRITE setSortDescending NOTIFY itemsChanged)
 
 public:
     explicit ModFolderPage(
@@ -39,74 +46,81 @@ public:
         QString id,
         QString iconName,
         QString displayName,
-        QString helpPage = "",
-        QWidget *parent = 0
-    );
-    virtual ~ModFolderPage();
+        QString helpPage = {},
+        QWidget *parent = nullptr);
+    ~ModFolderPage() override;
 
-    void setFilter(const QString & filter)
-    {
-        m_fileSelectionFilter = filter;
-    }
+    void setFilter(const QString &filter) { m_fileSelectionFilter = filter; }
+    void setShowConfigFolder(bool show);
 
-    virtual QString displayName() const override
-    {
-        return m_displayName;
-    }
-    virtual QIcon icon() const override
-    {
-        return APPLICATION->getThemedIcon(m_iconName);
-    }
-    virtual QString id() const override
-    {
-        return m_id;
-    }
-    virtual QString helpPage() const override
-    {
-        return m_helpName;
-    }
-    virtual bool shouldDisplay() const override;
+    QString displayName() const override { return m_displayName; }
+    QIcon icon() const override;
+    QString id() const override { return m_id; }
+    QString helpPage() const override { return m_helpName; }
+    bool shouldDisplay() const override;
+    void openedImpl() override;
+    void closedImpl() override;
 
-    virtual void openedImpl() override;
-    virtual void closedImpl() override;
-protected:
-    bool eventFilter(QObject *obj, QEvent *ev) override;
-    bool modListFilter(QKeyEvent *ev);
-    QMenu * createPopupMenu() override;
+    QVariantList items() const;
+    QVariantMap selectedMod() const;
+    QVariantMap actionStates() const;
+    QString filterText() const { return m_filterText; }
+    void setFilterText(const QString &text);
+    QString sortMode() const { return m_sortMode; }
+    void setSortMode(const QString &mode);
+    bool sortDescending() const { return m_sortDescending; }
+    void setSortDescending(bool descending);
+
+    Q_INVOKABLE void selectMod(const QString &modId, int modifiers);
+    Q_INVOKABLE void setModEnabled(int sourceRow, bool enabled);
+    Q_INVOKABLE void installUpdate(int sourceRow);
+    Q_INVOKABLE void installDroppedFiles(const QVariantList &urls);
+    Q_INVOKABLE void openModHomepage();
+    Q_INVOKABLE void triggerAction(const QString &actionName);
+
+signals:
+    void itemsChanged();
+    void selectionChanged();
+    void actionStatesChanged();
+
+private slots:
+    void onRunningStatusChanged(bool running);
 
 protected:
     BaseInstance *m_inst = nullptr;
 
-protected:
-    Ui::ModFolderPage *ui = nullptr;
+private:
+    QVariantMap modData(int sourceRow) const;
+    QList<int> visibleRows() const;
+    QList<int> selectedRows() const;
+    int findModRow(const QString &modId) const;
+    void reconcileSelection();
+    void refreshAfterModelChange();
+    void applyModStatus(const QList<int> &rows, int action);
+    void addFiles();
+    void openDownloader();
+    void updateAll();
+    void removeSelected();
+    void enableSelected();
+    void disableSelected();
+    void viewFolder();
+    void viewConfigs();
+
     std::shared_ptr<ModFolderModel> m_mods;
-    QSortFilterProxyModel *m_filterModel = nullptr;
     QString m_iconName;
     QString m_id;
     QString m_displayName;
     QString m_helpName;
-    QString m_fileSelectionFilter;
-    QString m_viewFilter;
+    QString m_fileSelectionFilter = QStringLiteral("%1 (*.zip *.jar)");
+    QString m_filterText;
+    QString m_sortMode = QStringLiteral("name");
+    QString m_currentModId;
+    QString m_selectionAnchorId;
+    QSet<QString> m_selectedModIds;
+    bool m_sortDescending = false;
     bool m_controlsEnabled = true;
-
-public
-slots:
-    void modCurrent(const QModelIndex &current, const QModelIndex &previous);
-
-private
-slots:
-    void modItemActivated(const QModelIndex &index);
-    void on_filterTextChanged(const QString & newContents);
-    void on_RunningState_changed(bool running);
-    void on_actionAdd_triggered();
-    void on_actionDownload_triggered();
-    void on_actionUpdateAll_triggered();
-    void on_actionRemove_triggered();
-    void on_actionEnable_triggered();
-    void on_actionDisable_triggered();
-    void on_actionView_Folder_triggered();
-    void on_actionView_configs_triggered();
-    void ShowContextMenu(const QPoint &pos);
+    bool m_showConfigFolder = true;
+    bool m_suppressModelUpdates = false;
 };
 
 class CoreModFolderPage : public ModFolderPage
@@ -114,9 +128,7 @@ class CoreModFolderPage : public ModFolderPage
 public:
     explicit CoreModFolderPage(BaseInstance *inst, std::shared_ptr<ModFolderModel> mods, QString id,
                                QString iconName, QString displayName, QString helpPage = "",
-                               QWidget *parent = 0);
-    virtual ~CoreModFolderPage()
-    {
-    }
-    virtual bool shouldDisplay() const;
+                               QWidget *parent = nullptr);
+    ~CoreModFolderPage() override = default;
+    bool shouldDisplay() const override;
 };

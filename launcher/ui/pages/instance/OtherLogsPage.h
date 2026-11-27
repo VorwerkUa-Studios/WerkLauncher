@@ -15,26 +15,27 @@
 
 #pragma once
 
+#include <QFont>
+#include <QStringList>
 #include <QWidget>
 
 #include "ui/pages/BasePage.h"
 #include <Application.h>
 #include <pathmatcher/IPathMatcher.h>
 
-namespace Ui
-{
-class OtherLogsPage;
-}
-
 class RecursiveFileSystemWatcher;
 
 class OtherLogsPage : public QWidget, public BasePage
 {
     Q_OBJECT
+    Q_PROPERTY(QStringList files READ files NOTIFY filesChanged)
+    Q_PROPERTY(QString currentFile READ currentFile NOTIFY fileSelectionChanged)
+    Q_PROPERTY(QString content READ content NOTIFY contentChanged)
+    Q_PROPERTY(QFont textFont READ textFont NOTIFY contentChanged)
 
 public:
     explicit OtherLogsPage(QString path, IPathMatcher::Ptr fileFilter, QWidget *parent = 0);
-    ~OtherLogsPage();
+    ~OtherLogsPage() override;
 
     QString id() const override
     {
@@ -55,27 +56,34 @@ public:
     void openedImpl() override;
     void closedImpl() override;
 
-private slots:
-    void populateSelectLogBox();
-    void on_selectLogBox_currentIndexChanged(const int index);
-    void on_btnReload_clicked();
-    void on_btnPaste_clicked();
-    void on_btnCopy_clicked();
-    void on_btnDelete_clicked();
-    void on_btnClean_clicked();
+    QStringList files() const;
+    QString currentFile() const { return m_currentFile; }
+    QString content() const { return m_content; }
+    QFont textFont() const { return m_textFont; }
 
-    void on_findButton_clicked();
-    void findActivated();
-    void findNextActivated();
-    void findPreviousActivated();
+    Q_INVOKABLE void selectFile(const QString &file);
+    Q_INVOKABLE void reload();
+    Q_INVOKABLE void uploadLog();
+    Q_INVOKABLE void copyLog();
+    Q_INVOKABLE void deleteLog();
+    Q_INVOKABLE void cleanLogs();
+    Q_INVOKABLE int findInContent(const QString &query, int start,
+                                  bool reverse) const;
+
+signals:
+    void filesChanged();
+    void fileSelectionChanged();
+    void contentChanged();
 
 private:
-    void setControlsEnabled(const bool enabled);
+    void refreshFiles();
+    QString absoluteFilePath(const QString &file) const;
+    void setContent(const QString &content);
 
 private:
-    Ui::OtherLogsPage *ui;
     QString m_path;
     QString m_currentFile;
-    IPathMatcher::Ptr m_fileFilter;
+    QString m_content;
+    QFont m_textFont;
     RecursiveFileSystemWatcher *m_watcher;
 };
