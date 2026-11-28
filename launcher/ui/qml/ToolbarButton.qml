@@ -4,16 +4,17 @@ import QtQuick.Controls
 Item {
     id: control
 
-    implicitWidth: 42
-    implicitHeight: 42
+    implicitWidth: 44
+    implicitHeight: 44
     activeFocusOnTab: true
 
     property bool bright: false
-    property string accentColor: "#ffae00"
-    property color accentForeground: "#000000"
+    property string accentColor: Theme.accent
+    property color accentForeground: Theme.textOnAccent
     property int iconVersion: 0
     property string iconSource: ""
     property string tooltip: ""
+    property int iconSize: 22
 
     signal clicked()
 
@@ -23,22 +24,25 @@ Item {
     Keys.onReturnPressed: clicked()
     Keys.onSpacePressed: clicked()
 
+    scale: buttonMouseArea.pressed ? 0.94 : (buttonMouseArea.containsMouse ? 1.05 : 1.0)
+    Behavior on scale {
+        NumberAnimation { duration: 120; easing.type: Easing.OutQuad }
+    }
+
     Rectangle {
         anchors.fill: parent
-        anchors.margins: 2
-        radius: 12
+        anchors.margins: 3
+        radius: Theme.radiusMd
         color: control.activeFocus || buttonMouseArea.containsMouse
-               ? Qt.rgba(Qt.color(control.accentColor).r,
-                         Qt.color(control.accentColor).g,
-                         Qt.color(control.accentColor).b, control.bright ? 0.12 : 0.18)
-               : (control.bright ? "#ffffff" : "#252629")
+               ? Theme.alpha(Theme.accent, control.bright ? 0.12 : 0.18)
+               : "transparent"
         border.color: control.activeFocus || buttonMouseArea.containsMouse
-                      ? control.accentColor
-                      : (control.bright ? "#e5e5ea" : "#34363a")
+                      ? Theme.alpha(Theme.accent, 0.45)
+                      : "transparent"
         border.width: 1
 
-        Behavior on color { ColorAnimation { duration: 120 } }
-        Behavior on border.color { ColorAnimation { duration: 120 } }
+        Behavior on color { ColorAnimation { duration: Theme.animFast } }
+        Behavior on border.color { ColorAnimation { duration: Theme.animFast } }
 
         Image {
             anchors.centerIn: parent
@@ -53,28 +57,29 @@ Item {
             width: control.iconSize
             height: control.iconSize
             fillMode: Image.PreserveAspectFit
-            opacity: control.enabled ? 1 : 0.5
+            opacity: control.enabled ? (buttonMouseArea.containsMouse ? 1.0 : 0.85) : 0.4
+            Behavior on opacity { NumberAnimation { duration: Theme.animFast } }
         }
     }
-
-    property int iconSize: 24
 
     ToolTip {
         id: buttonTooltip
         text: control.tooltip
         visible: buttonMouseArea.containsMouse && control.tooltip !== ""
-        delay: 500
+        delay: 400
 
         contentItem: Text {
             text: buttonTooltip.text
-            color: control.accentForeground
-            font.pixelSize: 12
-            font.family: "Segoe UI"
+            color: Theme.textPrimary
+            font.pixelSize: Theme.fontSizeSmall
+            font.family: Theme.fontFamily
         }
 
         background: Rectangle {
-            color: control.accentColor
-            radius: 4
+            color: Theme.bgCard
+            border.color: Theme.borderSubtle
+            border.width: 1
+            radius: Theme.radiusSm
         }
     }
 

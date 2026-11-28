@@ -1,5 +1,7 @@
 <RCC>
     <qresource prefix="/qml">
+        <file alias="qmldir">../ui/qml/qmldir</file>
+        <file alias="Theme.qml">../ui/qml/Theme.qml</file>
         <file alias="Main.qml">../ui/qml/Main.qml</file>
         <file alias="InstanceCard.qml">../ui/qml/InstanceCard.qml</file>
         <file alias="InstanceJavaPage.qml">../ui/qml/InstanceJavaPage.qml</file>

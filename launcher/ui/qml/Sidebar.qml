@@ -7,8 +7,8 @@ import QtQuick.Layouts
 Rectangle {
     id: sidebar
 
-    implicitWidth: 48
-    color: bright ? "#ffffff" : "#1a1a1b"
+    implicitWidth: 54
+    color: Theme.bgSidebar
 
     property bool bright: launcherController
                           ? launcherController.themeName === "bright"
@@ -16,28 +16,14 @@ Rectangle {
                           : false
     property string accentColor: launcherController
                                  ? launcherController.accentColor
-                                 : "#4CAF50"
-    property color accentForeground: contrastForeground(accentColor)
+                                 : "#ffae00"
+    property color accentForeground: Theme.contrastForeground(accentColor)
     property int iconVersion: 0
     property var accountMenuItems: []
 
-    function contrastForeground(colorValue) {
-        const color = Qt.color(colorValue)
-        function linear(channel) {
-            return channel <= 0.04045
-                    ? channel / 12.92
-                    : Math.pow((channel + 0.055) / 1.055, 2.4)
-        }
-        const luminance = 0.2126 * linear(color.r)
-                        + 0.7152 * linear(color.g)
-                        + 0.0722 * linear(color.b)
-        return 1.05 / (luminance + 0.05) >= (luminance + 0.05) / 0.05
-                ? "#ffffff" : "#000000"
-    }
-
     function openMenu(menu, button) {
         const position = button.mapToItem(sidebar, 0, button.height)
-        menu.x = width
+        menu.x = width + 4
         menu.y = Math.max(0, Math.min(position.y, height - menu.implicitHeight))
         menu.open()
     }
@@ -58,27 +44,20 @@ Rectangle {
         }
     }
 
-    Rectangle {
-        anchors.left: parent.left
-        anchors.top: parent.top
-        anchors.bottom: parent.bottom
-        width: 1
-        color: sidebar.bright ? "#e5e5ea" : Qt.rgba(1, 1, 1, 0.06)
-    }
-
+    // Right subtle separator border
     Rectangle {
         anchors.right: parent.right
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         width: 1
-        color: sidebar.bright ? "#e5e5ea" : Qt.rgba(1, 1, 1, 0.06)
+        color: Theme.borderSubtle
     }
 
     ColumnLayout {
         anchors.fill: parent
         anchors.topMargin: 12
-        anchors.bottomMargin: 6
-        spacing: 16
+        anchors.bottomMargin: 12
+        spacing: 12
 
         Item { Layout.preferredHeight: 34 }
 
@@ -138,6 +117,7 @@ Rectangle {
 
         Item { Layout.fillHeight: true }
 
+        // User Account Button
         ToolbarButton {
             id: accountsButton
             Layout.alignment: Qt.AlignHCenter
@@ -145,7 +125,7 @@ Rectangle {
             accentColor: sidebar.accentColor
             accentForeground: sidebar.accentForeground
             iconVersion: sidebar.iconVersion
-            iconSize: 28
+            iconSize: 26
             iconSource: launcherController
                         ? (launcherController.accountIconUrl !== ""
                            ? launcherController.accountIconUrl
@@ -154,8 +134,6 @@ Rectangle {
             tooltip: qsTranslate("MainWindow", "Manage Accounts")
             onClicked: sidebar.openAccountsMenu(accountsButton)
         }
-
-        Item { Layout.preferredHeight: 8 }
     }
 
     ToolbarButton {
@@ -180,9 +158,9 @@ Rectangle {
         width: 250
         delegate: StyledMenuItem { }
         background: Rectangle {
-            color: sidebar.bright ? "#ffffff" : "#252526"
-            border.color: sidebar.bright ? "#e5e5ea" : "#3a3a3b"
-            radius: 8
+            color: Theme.bgCard
+            border.color: Theme.borderSubtle
+            radius: Theme.radiusMd
         }
         StyledMenuItem {
             text: qsTranslate("MainWindow", "View Instance Folder")
@@ -200,9 +178,9 @@ Rectangle {
         width: 240
         delegate: StyledMenuItem { }
         background: Rectangle {
-            color: sidebar.bright ? "#ffffff" : "#252526"
-            border.color: sidebar.bright ? "#e5e5ea" : "#3a3a3b"
-            radius: 8
+            color: Theme.bgCard
+            border.color: Theme.borderSubtle
+            radius: Theme.radiusMd
         }
         StyledMenuItem {
             text: qsTranslate("MainWindow", "Статистика часу")
@@ -235,9 +213,9 @@ Rectangle {
         width: 280
         delegate: StyledMenuItem { }
         background: Rectangle {
-            color: sidebar.bright ? "#ffffff" : "#252526"
-            border.color: sidebar.bright ? "#e5e5ea" : "#3a3a3b"
-            radius: 8
+            color: Theme.bgCard
+            border.color: Theme.borderSubtle
+            radius: Theme.radiusMd
         }
 
         StyledMenuItem {
@@ -269,17 +247,17 @@ Rectangle {
                         Layout.fillWidth: true
                         text: accountMenuItem.text
                         color: accountMenuItem.highlighted
-                               ? sidebar.accentForeground
-                               : (sidebar.bright ? "#1a1a1b" : "#ffffff")
-                        font.pixelSize: 13
-                        font.family: "Segoe UI"
+                               ? Theme.textOnAccent
+                               : Theme.textPrimary
+                        font.pixelSize: Theme.fontSizeBody
+                        font.family: Theme.fontFamily
                         elide: Text.ElideRight
                     }
                 }
                 background: Rectangle {
                     color: accountMenuItem.highlighted
-                           ? sidebar.accentColor : "transparent"
-                    radius: 4
+                           ? Theme.accent : "transparent"
+                    radius: Theme.radiusSm
                 }
                 onTriggered: launcherController.setDefaultAccount(modelData.index)
             }
@@ -320,20 +298,19 @@ Rectangle {
                 Layout.fillWidth: true
                 text: styledMenuItem.text
                 color: !styledMenuItem.enabled
-                       ? (sidebar.bright ? "#8e929a" : "#858991")
+                       ? Theme.textMuted
                        : (styledMenuItem.highlighted
-                          ? sidebar.accentForeground
-                          : (sidebar.bright ? "#202127" : "#f0f1f3"))
-                font.pixelSize: 13
-                font.family: "Segoe UI"
+                          ? Theme.textOnAccent
+                          : Theme.textPrimary)
+                font.pixelSize: Theme.fontSizeBody
+                font.family: Theme.fontFamily
                 elide: Text.ElideRight
             }
         }
         background: Rectangle {
             color: styledMenuItem.highlighted
-                   ? sidebar.accentColor : "transparent"
-            radius: 5
+                   ? Theme.accent : "transparent"
+            radius: Theme.radiusSm
         }
     }
-
 }

@@ -8,10 +8,21 @@ import QtQuick.Layouts
 Rectangle {
     id: mainWindow
     anchors.fill: parent
-    
+
     property string themeName: launcherController ? launcherController.themeName : "dark"
-    property bool isBright: themeName === "bright" || themeName === "system" // Assuming bright if not dark, or we could just check if it's "bright"
-    
+    property bool isBright: themeName === "bright" || themeName === "system"
+
+    Binding {
+        target: Theme
+        property: "isBright"
+        value: mainWindow.isBright
+    }
+    Binding {
+        target: Theme
+        property: "accent"
+        value: Qt.color(mainWindow.accentColor)
+    }
+
     // Dynamic icon reload support
     property int iconVersion: 0
     Connections {
@@ -22,40 +33,26 @@ Rectangle {
             }
         }
     }
-    
-    color: isBright ? "#f5f5f7" : "#1a1a1b"
 
-    property string accentColor: launcherController ? launcherController.accentColor : "#4CAF50"
-    property color accentForeground: contrastForeground(accentColor)
-    
+    color: Theme.bgRoot
+
+    property string accentColor: launcherController ? launcherController.accentColor : "#ffae00"
+    property color accentForeground: Theme.contrastForeground(accentColor)
+
     // Custom background wallpaper support
     Image {
         anchors.fill: parent
-        source: launcherController ? (launcherController.getWallpaper() || "") : "" // Fallback if C++ doesn't supply it yet
+        source: launcherController ? (launcherController.getWallpaper() || "") : ""
         fillMode: Image.PreserveAspectCrop
         visible: source.toString() !== ""
-        opacity: 0.2 // subtle background
+        opacity: mainWindow.isBright ? 0.08 : 0.15
     }
+
     property int selectedInstanceIndex: -1
     property var instanceGroups: []
     property bool initializingSortMode: true
-    property int instanceCardWidth: Math.max(128, Math.min(176, (width - 64) / 5))
-    property int instanceCardHeight: instanceCardWidth
-
-    function contrastForeground(colorValue) {
-        const color = Qt.color(colorValue)
-        function linear(channel) {
-            return channel <= 0.04045
-                    ? channel / 12.92
-                    : Math.pow((channel + 0.055) / 1.055, 2.4)
-        }
-        const luminance = 0.2126 * linear(color.r)
-                        + 0.7152 * linear(color.g)
-                        + 0.0722 * linear(color.b)
-        const whiteContrast = 1.05 / (luminance + 0.05)
-        const blackContrast = (luminance + 0.05) / 0.05
-        return whiteContrast >= blackContrast ? "#ffffff" : "#000000"
-    }
+    property int instanceCardWidth: Math.max(160, Math.min(220, (width - 80) / 4))
+    property int instanceCardHeight: Math.round(instanceCardWidth * 1.25)
 
     function openMenuAt(menu, x, y) {
         const menuWidth = menu.implicitWidth > 0 ? menu.implicitWidth : menu.width
@@ -113,58 +110,111 @@ Rectangle {
                 // Top Toolbar (Search + Sort)
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: mainWindow.width < 820 ? 44 : 50
+                    Layout.preferredHeight: 52
                     color: "transparent"
 
-                    // Subtle bottom border
+                    // Subtle bottom separator
                     Rectangle {
                         anchors.bottom: parent.bottom
                         anchors.left: parent.left
                         anchors.right: parent.right
                         height: 1
-                        color: isBright ? "#d1d1d6" : Qt.rgba(1, 1, 1, 0.06)
+                        color: Theme.borderSubtle
                     }
 
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 8
-                        anchors.rightMargin: 8
+                        anchors.leftMargin: 16
+                        anchors.rightMargin: 16
                         anchors.topMargin: 8
                         anchors.bottomMargin: 8
-                        spacing: 8
+                        spacing: 12
 
                         // Search Field
                         Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 32
-                            color: isBright ? "rgba(255, 255, 255, 0.8)" : Qt.rgba(0, 0, 0, 0.2)
-                            radius: 4
-                            border.color: searchInput.activeFocus ? mainWindow.accentColor : (isBright ? "#d1d1d6" : Qt.rgba(1, 1, 1, 0.1))
+                            Layout.preferredHeight: 36
+                            color: Theme.bgInput
+                            radius: Theme.radiusMd
+                            border.color: searchInput.activeFocus ? Theme.accent : Theme.borderSubtle
+                            border.width: 1
 
-                            TextInput {
-                                id: searchInput
+                            Behavior on border.color { ColorAnimation { duration: Theme.animFast } }
+
+                            RowLayout {
                                 anchors.fill: parent
-                                anchors.leftMargin: 12
-                                anchors.rightMargin: 12
-                                verticalAlignment: TextInput.AlignVCenter
-                                color: isBright ? "#1a1a1b" : "#dddddd"
-                                font.pixelSize: 13
-                                font.family: "Segoe UI"
-                                clip: true
+                                anchors.leftMargin: 10
+                                anchors.rightMargin: 10
+                                spacing: 8
 
-                                onTextChanged: {
-                                    if (launcherController) {
-                                        launcherController.searchTextChanged(text)
+                                Text {
+                                    text: "\uD83D\uDD0D" // magnifying glass
+                                    font.pixelSize: 12
+                                    opacity: 0.6
+                                }
+
+                                TextInput {
+                                    id: searchInput
+                                    Layout.fillWidth: true
+                                    verticalAlignment: TextInput.AlignVCenter
+                                    color: Theme.textPrimary
+                                    selectionColor: Theme.accent
+                                    selectedTextColor: Theme.textOnAccent
+                                    font.pixelSize: Theme.fontSizeBody
+                                    font.family: Theme.fontFamily
+                                    clip: true
+
+                                    onTextChanged: {
+                                        if (launcherController) {
+                                            launcherController.searchTextChanged(text)
+                                        }
+                                    }
+
+                                    Text {
+                                        text: qsTranslate("MainWindow", "Search instances...")
+                                        color: Theme.textMuted
+                                        font.pixelSize: Theme.fontSizeBody
+                                        font.family: Theme.fontFamily
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        visible: !parent.text && !parent.activeFocus
                                     }
                                 }
 
+                                // Clear Button when text entered
                                 Text {
-                                    text: qsTranslate("MainWindow", "Search instances...")
-                                    color: isBright ? "#8e8e93" : "#555555"
-                                    font.pixelSize: 13
-                                    font.family: "Segoe UI"
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    visible: !parent.text && !parent.activeFocus
+                                    text: "\u2715"
+                                    color: Theme.textMuted
+                                    font.pixelSize: 12
+                                    font.bold: true
+                                    visible: searchInput.text.length > 0
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        anchors.margins: -4
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            searchInput.text = ""
+                                            searchInput.forceActiveFocus()
+                                        }
+                                    }
+                                }
+
+                                // Shortcut Hint Badge
+                                Rectangle {
+                                    visible: searchInput.text.length === 0
+                                    Layout.preferredHeight: 18
+                                    implicitWidth: 42
+                                    radius: Theme.radiusXs
+                                    color: Theme.bgPill
+                                    border.color: Theme.borderSubtle
+                                    border.width: 1
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: "Ctrl+F"
+                                        color: Theme.textMuted
+                                        font.pixelSize: 10
+                                        font.family: Theme.fontMono
+                                    }
                                 }
                             }
                         }
@@ -172,50 +222,52 @@ Rectangle {
                         // Sort ComboBox
                         ComboBox {
                             id: sortCombo
-                            Layout.preferredWidth: mainWindow.width < 820 ? 112 : 148
-                            Layout.preferredHeight: 32
+                            Layout.preferredWidth: 160
+                            Layout.preferredHeight: 36
                             model: [qsTranslate("MainWindow", "Sort by Name"), qsTranslate("MainWindow", "Sort by Last Played"), qsTranslate("MainWindow", "Sort by Version")]
                             currentIndex: 0
 
                             background: Rectangle {
-                                color: isBright ? "#ffffff" : Qt.rgba(0, 0, 0, 0.2)
-                                radius: 4
-                                border.color: sortCombo.pressed ? mainWindow.accentColor : (isBright ? "#d1d1d6" : Qt.rgba(1, 1, 1, 0.1))
+                                color: Theme.bgInput
+                                radius: Theme.radiusMd
+                                border.color: sortCombo.activeFocus || sortCombo.pressed ? Theme.accent : Theme.borderSubtle
+                                border.width: 1
                             }
 
                             contentItem: Text {
                                 text: sortCombo.displayText
-                                color: isBright ? "#1a1a1b" : "#aaaaaa"
-                                font.pixelSize: 12
-                                font.family: "Segoe UI"
+                                color: Theme.textPrimary
+                                font.pixelSize: Theme.fontSizeSmall
+                                font.family: Theme.fontFamily
                                 verticalAlignment: Text.AlignVCenter
-                                leftPadding: 12
+                                leftPadding: 10
                             }
-                            
+
                             delegate: ItemDelegate {
                                 id: sortItem
                                 required property string modelData
                                 width: sortCombo.width
-                                implicitHeight: 36
+                                implicitHeight: 34
                                 contentItem: Text {
                                     text: sortItem.modelData
                                     color: sortItem.highlighted
-                                           ? mainWindow.accentForeground
-                                           : (mainWindow.isBright ? "#202127" : "#f0f1f3")
-                                    font.pixelSize: 12
-                                    font.family: "Segoe UI"
+                                           ? Theme.textOnAccent
+                                           : Theme.textPrimary
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.family: Theme.fontFamily
                                 }
                                 background: Rectangle {
-                                    color: sortItem.highlighted ? mainWindow.accentColor : "transparent"
+                                    color: sortItem.highlighted ? Theme.accent : "transparent"
+                                    radius: Theme.radiusSm
                                 }
                             }
 
                             popup: Popup {
                                 popupType: Popup.Item
-                                y: sortCombo.height - 1
+                                y: sortCombo.height + 4
                                 width: sortCombo.width
-                                implicitHeight: contentItem.implicitHeight
-                                padding: 1
+                                implicitHeight: contentItem.implicitHeight + 8
+                                padding: 4
 
                                 contentItem: ListView {
                                     clip: true
@@ -226,9 +278,9 @@ Rectangle {
                                 }
 
                                 background: Rectangle {
-                                    color: isBright ? "#ffffff" : "#252526"
-                                    border.color: isBright ? "#e5e5ea" : "#2a2a2b"
-                                    radius: 4
+                                    color: Theme.bgCard
+                                    border.color: Theme.borderSubtle
+                                    radius: Theme.radiusMd
                                 }
                             }
 
@@ -250,13 +302,25 @@ Rectangle {
                     Flickable {
                         id: instanceGroupsView
                         anchors.fill: parent
-                        anchors.margins: Math.max(8, Math.min(18, mainWindow.width / 80))
+                        anchors.margins: 16
                         clip: true
                         contentWidth: width
                         contentHeight: groupsColumn.implicitHeight
 
                         ScrollBar.vertical: ScrollBar {
+                            id: vScrollBar
                             policy: ScrollBar.AsNeeded
+                            width: 6
+                            background: null
+                            contentItem: Rectangle {
+                                implicitWidth: 6
+                                radius: 3
+                                color: vScrollBar.hovered || vScrollBar.pressed
+                                       ? Theme.accent
+                                       : (Theme.isBright ? "rgba(0, 0, 0, 0.25)" : "rgba(255, 255, 255, 0.25)")
+                                opacity: vScrollBar.active ? 1.0 : 0.0
+                                Behavior on opacity { NumberAnimation { duration: 250 } }
+                            }
                         }
 
                         TapHandler {
@@ -279,7 +343,7 @@ Rectangle {
                         Column {
                             id: groupsColumn
                             width: instanceGroupsView.width
-                            spacing: 18
+                            spacing: 24
 
                             Repeater {
                                 id: groupRepeater
@@ -290,29 +354,56 @@ Rectangle {
                                     required property var modelData
                                     property bool collapsed: modelData.collapsed
                                     width: groupsColumn.width
-                                    spacing: 8
+                                    spacing: 12
 
+                                    // Group Header
                                     Row {
-                                        spacing: 6
+                                        spacing: 8
 
                                         Text {
-                                            text: groupSection.collapsed ? "\u25B6" : "\u25BC"
-                                            color: isBright ? "#8e8e93" : "#999999"
-                                            font.pixelSize: 11
+                                            text: "\u25B6"
+                                            color: Theme.accent
+                                            font.pixelSize: 10
+                                            rotation: groupSection.collapsed ? 0 : 90
                                             anchors.verticalCenter: parent.verticalCenter
+                                            Behavior on rotation {
+                                                NumberAnimation { duration: Theme.animFast; easing.type: Easing.OutQuad }
+                                            }
                                         }
 
                                         Text {
                                             text: modelData.label
-                                            color: isBright ? "#8e8e93" : "#999999"
-                                            font.pixelSize: 15
-                                            font.family: "Segoe UI"
+                                            color: Theme.textPrimary
+                                            font.pixelSize: Theme.fontSizeSubheading
+                                            font.family: Theme.fontFamily
                                             font.bold: true
+                                        }
+
+                                        // Instances Count Badge
+                                        Rectangle {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            height: 18
+                                            implicitWidth: countText.implicitWidth + 10
+                                            radius: Theme.radiusPill
+                                            color: Theme.bgPill
+                                            border.color: Theme.borderSubtle
+                                            border.width: 1
+
+                                            Text {
+                                                id: countText
+                                                anchors.centerIn: parent
+                                                text: modelData.instances.length
+                                                color: Theme.textMuted
+                                                font.pixelSize: 10
+                                                font.family: Theme.fontFamily
+                                                font.bold: true
+                                            }
                                         }
 
                                         MouseArea {
                                             anchors.fill: parent
                                             acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                            cursorShape: Qt.PointingHandCursor
                                             onClicked: (mouse) => {
                                                 if (mouse.button === Qt.RightButton) {
                                                     const position = mapToItem(mainWindow, mouse.x, mouse.y)
@@ -330,7 +421,7 @@ Rectangle {
 
                                     Flow {
                                         width: parent.width
-                                        spacing: 8
+                                        spacing: 14
                                         height: childrenRect.height
                                         visible: !groupSection.collapsed
 
@@ -365,9 +456,9 @@ Rectangle {
                         Text {
                             anchors.centerIn: instanceGroupsView
                             text: qsTranslate("MainWindow", "No instances found")
-                            color: isBright ? "#8e8e93" : "#444444"
-                            font.pixelSize: 16
-                            font.family: "Segoe UI"
+                            color: Theme.textMuted
+                            font.pixelSize: Theme.fontSizeHeading
+                            font.family: Theme.fontFamily
                             visible: (!instanceModel || instanceModel.rowCount() === 0) && mainWindow.instanceGroups.length === 0
                         }
                     }
@@ -378,7 +469,7 @@ Rectangle {
         // --- STATUS BAR ---
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 22
+            Layout.preferredHeight: 26
             color: "transparent"
 
             // Top border
@@ -387,28 +478,28 @@ Rectangle {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 height: 1
-                color: isBright ? "#e5e5ea" : Qt.rgba(1, 1, 1, 0.06)
+                color: Theme.borderSubtle
             }
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 8
-                anchors.rightMargin: 8
+                anchors.leftMargin: 16
+                anchors.rightMargin: 16
 
                 Text {
-                    text: instanceModel ? instanceModel.rowCount() + " instance(s)" : ""
-                    color: isBright ? "#8e8e93" : Qt.rgba(1, 1, 1, 0.45)
-                    font.pixelSize: 11
-                    font.family: "Segoe UI"
+                    text: instanceModel ? instanceModel.rowCount() + " " + qsTranslate("MainWindow", "instance(s)") : ""
+                    color: Theme.textMuted
+                    font.pixelSize: Theme.fontSizeCaption
+                    font.family: Theme.fontFamily
                 }
 
                 Item { Layout.fillWidth: true }
 
                 Text {
                     text: ""
-                    color: Qt.rgba(1, 1, 1, 0.45)
-                    font.pixelSize: 11
-                    font.family: "Segoe UI"
+                    color: Theme.textMuted
+                    font.pixelSize: Theme.fontSizeCaption
+                    font.family: Theme.fontFamily
                 }
             }
         }
@@ -484,9 +575,9 @@ Rectangle {
             popupType: Popup.Item
             delegate: StyledMenuItem { }
             background: Rectangle {
-                color: mainWindow.isBright ? "#ffffff" : "#252526"
-                border.color: mainWindow.isBright ? "#e5e7eb" : "#3a3a3b"
-                radius: 8
+                color: Theme.bgCard
+                border.color: Theme.borderSubtle
+                radius: Theme.radiusMd
             }
             StyledMenuItem {
                 text: qsTranslate("MainWindow", "Export instance...")
@@ -523,20 +614,20 @@ Rectangle {
                 Layout.fillWidth: true
                 text: styledMenuItem.text
                 color: !styledMenuItem.enabled
-                       ? (mainWindow.isBright ? "#8e929a" : "#858991")
+                       ? Theme.textMuted
                        : (styledMenuItem.highlighted
-                              ? mainWindow.accentForeground
-                              : (mainWindow.isBright ? "#202127" : "#f0f1f3"))
-                font.pixelSize: 13
-                font.family: "Segoe UI"
+                              ? Theme.textOnAccent
+                              : Theme.textPrimary)
+                font.pixelSize: Theme.fontSizeBody
+                font.family: Theme.fontFamily
                 elide: Text.ElideRight
             }
         }
         background: Rectangle {
             color: styledMenuItem.highlighted
-                   ? mainWindow.accentColor
+                   ? Theme.accent
                    : "transparent"
-            radius: 5
+            radius: Theme.radiusSm
         }
     }
 
@@ -545,11 +636,9 @@ Rectangle {
         popupType: Popup.Item
         delegate: StyledMenuItem { }
         background: Rectangle {
-            color: mainWindow.isBright ? "#ffffff" : "#252526"
-            border.color: mainWindow.isBright ? "#e5e5ea" : "#3a3a3b"
-            radius: 8
+            color: Theme.bgCard
+            border.color: Theme.borderSubtle
+            radius: Theme.radiusMd
         }
     }
-
-    // The C++ MainWindow handles borders, shadows, and resizing natively.
 }

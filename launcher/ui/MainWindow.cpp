@@ -107,6 +107,9 @@ public:
 #include "LaunchController.h"
 
 #include <BaseInstance.h>
+#include <FileSystem.h>
+#include "minecraft/MinecraftInstance.h"
+#include "minecraft/PackProfile.h"
 
 #include <BuildConfig.h>
 
@@ -1505,6 +1508,55 @@ QVariantList MainWindow::getInstanceGroups() const {
     instance.insert("iconKey",
                     index.data(InstanceList::InstanceIconKeyRole).toString());
     instance.insert("modelIndex", row);
+
+    BaseInstance *baseInst = static_cast<BaseInstance *>(index.data(InstanceList::InstancePointerRole).value<void *>());
+    if (baseInst) {
+      instance.insert("isRunning", baseInst->isRunning());
+
+      int64_t totalSec = baseInst->totalTimePlayed();
+      if (totalSec > 0) {
+        int hours = totalSec / 3600;
+        int minutes = (totalSec % 3600) / 60;
+        if (hours > 0) {
+          instance.insert("playTime", QString("%1h %2m").arg(hours).arg(minutes));
+        } else {
+          instance.insert("playTime", QString("%1m").arg(minutes));
+        }
+      }
+
+      auto mcInst = dynamic_cast<MinecraftInstance *>(baseInst);
+      if (mcInst) {
+        auto profile = mcInst->getPackProfile();
+        if (profile) {
+          QString mcVer = profile->getComponentVersion("net.minecraft");
+          instance.insert("gameVersion", mcVer);
+
+          QString loader;
+          if (!profile->getComponentVersion("net.fabricmc.fabric-loader").isEmpty()) {
+            loader = "Fabric";
+          } else if (!profile->getComponentVersion("net.neoforged").isEmpty()) {
+            loader = "NeoForge";
+          } else if (!profile->getComponentVersion("net.minecraftforge").isEmpty()) {
+            loader = "Forge";
+          } else if (!profile->getComponentVersion("org.quiltmc.quilt-loader").isEmpty()) {
+            loader = "Quilt";
+          }
+          instance.insert("loader", loader);
+        }
+      }
+
+      QDir ssDir(FS::PathCombine(baseInst->gameRoot(), "screenshots"));
+      if (!ssDir.exists()) {
+        ssDir.setPath(FS::PathCombine(baseInst->instanceRoot(), "screenshots"));
+      }
+      if (ssDir.exists()) {
+        auto list = ssDir.entryInfoList(QStringList() << "*.png" << "*.jpg", QDir::Files, QDir::Time);
+        if (!list.isEmpty()) {
+          instance.insert("screenshot", QUrl::fromLocalFile(list.first().absoluteFilePath()).toString());
+        }
+      }
+    }
+
     instancesByGroup[group].append(instance);
   }
 
